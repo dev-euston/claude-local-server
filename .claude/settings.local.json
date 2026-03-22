@@ -10,7 +10,24 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); rules=d.get\\(''''rules'''',{}\\); print\\(''''prettier/prettier'''' in rules, rules.get\\(''''prettier/prettier''''\\)\\)\")",
       "Bash(npm test:*)",
       "Bash(node -e \":*)",
-      "Bash(node --input-type=module:*)"
+      "Bash(node --input-type=module:*)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(jq -e '.hooks.Stop[] | .hooks[] | select\\(.type == \"\"command\"\"\\) | .command' /Users/elee/Projects/claude-local-server/.claude/settings.local.json)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/elee/Projects/claude-local-server && npm run lint && npm run test:coverage",
+            "timeout": 120,
+            "statusMessage": "Running lint and tests..."
+          }
+        ]
+      }
     ]
   }
 }
