@@ -6,8 +6,5 @@
     "apiKey": "sk-ant-...",
     "model": "claude-opus-4-6"
   },
-  "cli": {
-    "model": "claude-opus-4-6",
-    "claudePath": "claude"
-  }
+  "cli": {}
 }

@@ -7,7 +7,7 @@ const ApiConfigSchema = z.object({
 });
 
 const CliConfigSchema = z.object({
-  model: z.string().min(1),
+  model: z.string().min(1).optional(),
   claudePath: z.string().min(1).default('claude'),
 });
 
@@ -22,14 +22,14 @@ const ConfigSchema = z
   .superRefine((data, ctx) => {
     if (data.backend === 'api' && !data.api) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'api block is required when backend is "api"',
         path: ['api'],
       });
     }
     if (data.backend === 'cli' && !data.cli) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'cli block is required when backend is "cli"',
         path: ['cli'],
       });

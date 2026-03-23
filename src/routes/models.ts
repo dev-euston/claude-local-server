@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Config } from '../config.js';
 
 export function registerModelsRoute(app: FastifyInstance, config: Config): void {
-  const modelId = config.backend === 'api' ? config.api.model : config.cli.model;
+  const modelId = config.backend === 'api' ? config.api.model : (config.cli.model ?? 'claude');
 
   app.get('/v1/models', async (_req, reply) => {
     return reply.send({

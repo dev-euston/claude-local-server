@@ -10,17 +10,17 @@ import type {
 
 export class CliBackend implements BackendDriver {
   constructor(
-    private model: string,
+    private model: string | undefined,
     private claudePath: string = 'claude',
   ) {}
 
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
     const prompt = buildPrompt(request.messages);
-    const id = `chatcmpl-${randomUUID()}`;
+    let id = `chatcmpl-${randomUUID()}`;
 
     const args = ['-p', prompt];
     if (request.system !== undefined) args.push('--system', request.system);
-    args.push('--output-format', 'stream-json');
+    args.push('--output-format', 'stream-json', '--verbose');
 
     const proc = spawn(this.claudePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -48,12 +48,21 @@ export class CliBackend implements BackendDriver {
         continue;
       }
 
-      if (
-        event['type'] === 'content_block_delta' &&
-        (event['delta'] as Record<string, unknown>)?.['type'] === 'text_delta'
-      ) {
-        yield { id, delta: (event['delta'] as Record<string, string>)['text'], finishReason: null };
-      } else if (event['type'] === 'message_stop') {
+      if (event['type'] === 'assistant') {
+        const message = event['message'] as Record<string, unknown> | undefined;
+        if (message?.['id']) id = `chatcmpl-${message['id'] as string}`;
+        const content = message?.['content'] as Array<Record<string, unknown>> | undefined;
+        if (content) {
+          for (const block of content) {
+            if (block['type'] === 'text' && typeof block['text'] === 'string') {
+              yield { id, delta: block['text'] as string, finishReason: null };
+            }
+          }
+        }
+      } else if (event['type'] === 'result') {
+        if (event['is_error']) {
+          throw new Error(`claude CLI error: ${event['result'] as string}`);
+        }
         yield { id, delta: '', finishReason: 'stop' };
         break;
       }
@@ -74,7 +83,7 @@ export class CliBackend implements BackendDriver {
       content += chunk.delta;
     }
 
-    return { id, model: this.model, content, promptTokens: 0, completionTokens: 0 };
+    return { id, model: this.model ?? 'claude', content, promptTokens: 0, completionTokens: 0 };
   }
 }
 

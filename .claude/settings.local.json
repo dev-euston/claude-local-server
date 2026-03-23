@@ -13,7 +13,9 @@
       "Bash(node --input-type=module:*)",
       "Skill(update-config)",
       "Skill(update-config:*)",
-      "Bash(jq -e '.hooks.Stop[] | .hooks[] | select\\(.type == \"\"command\"\"\\) | .command' /Users/elee/Projects/claude-local-server/.claude/settings.local.json)"
+      "Bash(jq -e '.hooks.Stop[] | .hooks[] | select\\(.type == \"\"command\"\"\\) | .command' /Users/elee/Projects/claude-local-server/.claude/settings.local.json)",
+      "Bash(claude -p \"say hi\" --output-format stream-json --verbose)",
+      "Bash(npm start:*)"
     ]
   },
   "hooks": {
@@ -22,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /Users/elee/Projects/claude-local-server && npm run lint && npm run test:coverage",
+            "command": "cd /Users/elee/Projects/claude-local-server && npm run build && npm run lint && npm run test:coverage",
             "timeout": 120,
             "statusMessage": "Running lint and tests..."
           }

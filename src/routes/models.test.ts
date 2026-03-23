@@ -37,4 +37,18 @@ describe('GET /v1/models', () => {
     const data = body['data'] as Array<Record<string, unknown>>;
     expect(data[0]['id']).toBe('claude-haiku-4-5-20251001');
   });
+
+  it('returns "claude" as model id when cli model is not configured', async () => {
+    const cliConfig: Config = {
+      backend: 'cli',
+      host: '127.0.0.1',
+      port: 3000,
+      cli: { claudePath: 'claude' },
+    };
+    const app = await buildApp(cliConfig);
+    const response = await app.inject({ method: 'GET', url: '/v1/models' });
+    const body = response.json() as Record<string, unknown>;
+    const data = body['data'] as Array<Record<string, unknown>>;
+    expect(data[0]['id']).toBe('claude');
+  });
 });

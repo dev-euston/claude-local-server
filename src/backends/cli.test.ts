@@ -34,15 +34,22 @@ const baseRequest: NormalizedRequest = {
   model: 'claude-opus-4-6',
 };
 
+const assistantEvent = (text: string, id = 'msg_123') =>
+  JSON.stringify({
+    type: 'assistant',
+    message: { id, content: [{ type: 'text', text }] },
+  });
+
+const resultEvent = (text: string) =>
+  JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text });
+
+const errorResultEvent = (text: string) =>
+  JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: text });
+
 describe('CliBackend.stream', () => {
-  it('yields text_delta chunks and final stop chunk', async () => {
+  it('yields text chunk from assistant event and stop chunk from result event', async () => {
     mockSpawn.mockReturnValue(
-      makeFakeProcess([
-        JSON.stringify({ type: 'message_start', message: {} }),
-        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hi' } }),
-        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: '!' } }),
-        JSON.stringify({ type: 'message_stop' }),
-      ]),
+      makeFakeProcess([assistantEvent('Hi!'), resultEvent('Hi!')]),
     );
 
     const backend = new CliBackend('claude-opus-4-6');
@@ -51,20 +58,33 @@ describe('CliBackend.stream', () => {
       chunks.push(chunk);
     }
 
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0].delta).toBe('Hi');
-    expect(chunks[1].delta).toBe('!');
-    expect(chunks[2].finishReason).toBe('stop');
-    expect(chunks[2].delta).toBe('');
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].delta).toBe('Hi!');
+    expect(chunks[0].finishReason).toBeNull();
+    expect(chunks[1].delta).toBe('');
+    expect(chunks[1].finishReason).toBe('stop');
   });
 
-  it('ignores non-text-delta event types', async () => {
+  it('uses message id from assistant event as chunk id prefix', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Hi', 'msg_abc123'), resultEvent('Hi')]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+    expect(chunks[0].id).toContain('msg_abc123');
+  });
+
+  it('ignores non-assistant/result event types', async () => {
     mockSpawn.mockReturnValue(
       makeFakeProcess([
-        JSON.stringify({ type: 'ping' }),
-        JSON.stringify({ type: 'content_block_start' }),
-        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'A' } }),
-        JSON.stringify({ type: 'message_stop' }),
+        JSON.stringify({ type: 'system', subtype: 'init' }),
+        JSON.stringify({ type: 'rate_limit_event' }),
+        assistantEvent('A'),
+        resultEvent('A'),
       ]),
     );
 
@@ -74,15 +94,12 @@ describe('CliBackend.stream', () => {
       chunks.push(chunk);
     }
     expect(chunks).toHaveLength(2);
+    expect(chunks[0].delta).toBe('A');
   });
 
   it('skips malformed JSON lines and continues', async () => {
     mockSpawn.mockReturnValue(
-      makeFakeProcess([
-        'not json !!!',
-        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'B' } }),
-        JSON.stringify({ type: 'message_stop' }),
-      ]),
+      makeFakeProcess(['not json !!!', assistantEvent('B'), resultEvent('B')]),
     );
 
     const backend = new CliBackend('claude-opus-4-6');
@@ -95,7 +112,7 @@ describe('CliBackend.stream', () => {
 
   it('throws when process exits with non-zero code', async () => {
     const proc = new EventEmitter() as FakeProcess;
-    proc.stdout = Readable.from([JSON.stringify({ type: 'message_stop' }) + '\n']);
+    proc.stdout = Readable.from([resultEvent('done') + '\n']);
     proc.stderr = new Readable({ read() {} });
     proc.stdout.on('end', () => {
       setImmediate(() => {
@@ -112,9 +129,22 @@ describe('CliBackend.stream', () => {
     }).rejects.toThrow(/exited with code 1/);
   });
 
+  it('throws when result event has is_error true', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([errorResultEvent('something went wrong')]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    await expect(async () => {
+      for await (const _chunk of backend.stream(baseRequest)) {
+        // consume
+      }
+    }).rejects.toThrow(/something went wrong/);
+  });
+
   it('captures stderr output in error message on non-zero exit', async () => {
     const proc = new EventEmitter() as FakeProcess;
-    proc.stdout = Readable.from([JSON.stringify({ type: 'message_stop' }) + '\n']);
+    proc.stdout = Readable.from([resultEvent('done') + '\n']);
     const stderrReadable = Readable.from(['error output from claude\n']);
     proc.stderr = stderrReadable;
     proc.stdout.on('end', () => setImmediate(() => proc.emit('close', 2)));
@@ -129,7 +159,7 @@ describe('CliBackend.stream', () => {
   });
 
   it('uses custom claudePath', async () => {
-    mockSpawn.mockReturnValue(makeFakeProcess([JSON.stringify({ type: 'message_stop' })]));
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6', '/custom/claude');
     for await (const _chunk of backend.stream(baseRequest)) {
       // consume
@@ -138,7 +168,7 @@ describe('CliBackend.stream', () => {
   });
 
   it('passes system message via --system flag', async () => {
-    mockSpawn.mockReturnValue(makeFakeProcess([JSON.stringify({ type: 'message_stop' })]));
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6');
     for await (const _chunk of backend.stream({ ...baseRequest, system: 'Be brief.' })) {
       // consume
@@ -150,7 +180,7 @@ describe('CliBackend.stream', () => {
   });
 
   it('does not include --system flag when system is not set', async () => {
-    mockSpawn.mockReturnValue(makeFakeProcess([JSON.stringify({ type: 'message_stop' })]));
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6');
     for await (const _chunk of backend.stream(baseRequest)) {
       // consume
@@ -161,11 +191,7 @@ describe('CliBackend.stream', () => {
 
   it('skips empty lines in output', async () => {
     mockSpawn.mockReturnValue(
-      makeFakeProcess([
-        '',
-        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'X' } }),
-        JSON.stringify({ type: 'message_stop' }),
-      ]),
+      makeFakeProcess(['', assistantEvent('X'), resultEvent('X')]),
     );
 
     const backend = new CliBackend('claude-opus-4-6');
@@ -177,7 +203,7 @@ describe('CliBackend.stream', () => {
   });
 
   it('formats assistant-role messages with Assistant prefix', async () => {
-    mockSpawn.mockReturnValue(makeFakeProcess([JSON.stringify({ type: 'message_stop' })]));
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6');
     for await (const _chunk of backend.stream({
       ...baseRequest,
@@ -195,19 +221,23 @@ describe('CliBackend.stream', () => {
   });
 });
 
+describe('CliBackend — no model configured', () => {
+  it('returns "claude" as model in response when no model set', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi')]),
+    );
+    const backend = new CliBackend(undefined);
+    const result = await backend.complete(baseRequest);
+    expect(result.model).toBe('claude');
+  });
+});
+
 describe('CliBackend.complete', () => {
   it('accumulates stream chunks into a NormalizedResponse', async () => {
     mockSpawn.mockReturnValue(
       makeFakeProcess([
-        JSON.stringify({
-          type: 'content_block_delta',
-          delta: { type: 'text_delta', text: 'Hello' },
-        }),
-        JSON.stringify({
-          type: 'content_block_delta',
-          delta: { type: 'text_delta', text: ' world' },
-        }),
-        JSON.stringify({ type: 'message_stop' }),
+        assistantEvent('Hello world'),
+        resultEvent('Hello world'),
       ]),
     );
 
@@ -221,7 +251,7 @@ describe('CliBackend.complete', () => {
 
   it('propagates stream errors through complete()', async () => {
     const proc = new EventEmitter() as FakeProcess;
-    proc.stdout = Readable.from([JSON.stringify({ type: 'message_stop' }) + '\n']);
+    proc.stdout = Readable.from([resultEvent('done') + '\n']);
     proc.stderr = new Readable({ read() {} });
     proc.stdout.on('end', () => setImmediate(() => proc.emit('close', 1)));
     mockSpawn.mockReturnValue(proc);

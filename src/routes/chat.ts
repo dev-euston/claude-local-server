@@ -20,7 +20,7 @@ export function registerChatRoute(
   config: Config,
   driver: BackendDriver,
 ): void {
-  const modelName = config.backend === 'api' ? config.api.model : config.cli.model;
+  const modelName = config.backend === 'api' ? config.api.model : (config.cli.model ?? 'claude');
 
   app.post(
     '/v1/chat/completions',

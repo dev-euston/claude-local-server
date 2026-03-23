@@ -63,6 +63,14 @@ describe('loadConfig — cli backend', () => {
     if (cfg.backend === 'cli') expect(cfg.cli.claudePath).toBe('/usr/local/bin/claude');
     rmSync(p);
   });
+
+  it('allows cli config without model', () => {
+    const p = writeTmp({ backend: 'cli', cli: {} });
+    const cfg = loadConfig(p);
+    expect(cfg.backend).toBe('cli');
+    if (cfg.backend === 'cli') expect(cfg.cli.model).toBeUndefined();
+    rmSync(p);
+  });
 });
 
 describe('loadConfig — validation errors', () => {
