@@ -7,6 +7,7 @@ const cfg: Config = {
   backend: 'api',
   host: '127.0.0.1',
   port: 3000,
+  logLevel: 'silent',
   api: { apiKey: 'sk-ant-test', model: 'claude-opus-4-6' },
 };
 

@@ -15,7 +15,13 @@
       "Skill(update-config:*)",
       "Bash(jq -e '.hooks.Stop[] | .hooks[] | select\\(.type == \"\"command\"\"\\) | .command' /Users/elee/Projects/claude-local-server/.claude/settings.local.json)",
       "Bash(claude -p \"say hi\" --output-format stream-json --verbose)",
-      "Bash(npm start:*)"
+      "Bash(npm start:*)",
+      "Bash(ls /Users/elee/Projects/claude-local-server/*.md)",
+      "Bash(git -C /Users/elee/Projects/claude-local-server diff HEAD -- src/backends/cli.ts src/backends/cli.test.ts)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git stash:*)",
+      "Bash(git:*)"
     ]
   },
   "hooks": {

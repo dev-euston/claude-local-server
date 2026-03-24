@@ -18,6 +18,7 @@ const ConfigSchema = z
     port: z.number().int().positive().default(3000),
     api: ApiConfigSchema.optional(),
     cli: CliConfigSchema.optional(),
+    logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'silent']).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.backend === 'api' && !data.api) {
@@ -40,8 +41,8 @@ type ApiConfig = z.infer<typeof ApiConfigSchema>;
 type CliConfig = z.infer<typeof CliConfigSchema>;
 
 export type Config =
-  | { backend: 'api'; host: string; port: number; api: ApiConfig; cli?: CliConfig }
-  | { backend: 'cli'; host: string; port: number; api?: ApiConfig; cli: CliConfig };
+  | { backend: 'api'; host: string; port: number; logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent'; api: ApiConfig; cli?: CliConfig }
+  | { backend: 'cli'; host: string; port: number; logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent'; api?: ApiConfig; cli: CliConfig };
 
 export function loadConfig(configPath: string): Config {
   let raw: string;

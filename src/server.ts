@@ -17,7 +17,7 @@ function createDriver(config: Config): BackendDriver {
 }
 
 export async function buildApp(config: Config, driver?: BackendDriver): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: { level: config.logLevel ?? 'info' } });
   await app.register(sensible);
 
   const activeDriver = driver ?? createDriver(config);

@@ -6,6 +6,7 @@ const apiConfig: Config = {
   backend: 'api',
   host: '127.0.0.1',
   port: 3000,
+  logLevel: 'silent',
   api: { apiKey: 'sk-ant-test', model: 'claude-opus-4-6' },
 };
 
@@ -29,6 +30,7 @@ describe('GET /v1/models', () => {
       backend: 'cli',
       host: '127.0.0.1',
       port: 3000,
+      logLevel: 'silent',
       cli: { model: 'claude-haiku-4-5-20251001', claudePath: 'claude' },
     };
     const app = await buildApp(cliConfig);
@@ -43,6 +45,7 @@ describe('GET /v1/models', () => {
       backend: 'cli',
       host: '127.0.0.1',
       port: 3000,
+      logLevel: 'silent',
       cli: { claudePath: 'claude' },
     };
     const app = await buildApp(cliConfig);

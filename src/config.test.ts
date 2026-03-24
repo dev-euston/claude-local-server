@@ -104,3 +104,32 @@ describe('loadConfig — validation errors', () => {
     rmSync(p);
   });
 });
+
+describe('loadConfig — logLevel', () => {
+  it('accepts logLevel "info"', () => {
+    const p = writeTmp({ backend: 'cli', logLevel: 'info', cli: {} });
+    const cfg = loadConfig(p);
+    expect(cfg.logLevel).toBe('info');
+    rmSync(p);
+  });
+
+  it('accepts logLevel "silent"', () => {
+    const p = writeTmp({ backend: 'cli', logLevel: 'silent', cli: {} });
+    const cfg = loadConfig(p);
+    expect(cfg.logLevel).toBe('silent');
+    rmSync(p);
+  });
+
+  it('rejects invalid logLevel "verbose"', () => {
+    const p = writeTmp({ backend: 'cli', logLevel: 'verbose', cli: {} });
+    expect(() => loadConfig(p)).toThrow('Invalid config');
+    rmSync(p);
+  });
+
+  it('logLevel is undefined when omitted — default is applied in buildApp, not loadConfig', () => {
+    const p = writeTmp({ backend: 'cli', cli: {} });
+    const cfg = loadConfig(p);
+    expect(cfg.logLevel).toBeUndefined();
+    rmSync(p);
+  });
+});

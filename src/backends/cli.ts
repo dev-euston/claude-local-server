@@ -19,7 +19,7 @@ export class CliBackend implements BackendDriver {
     let id = `chatcmpl-${randomUUID()}`;
 
     const args = ['-p', prompt];
-    if (request.system !== undefined) args.push('--system', request.system);
+    if (request.system !== undefined) args.push('--system-prompt', request.system);
     args.push('--output-format', 'stream-json', '--verbose');
 
     const proc = spawn(this.claudePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -88,7 +88,7 @@ export class CliBackend implements BackendDriver {
 }
 
 function buildPrompt(messages: NormalizedRequest['messages']): string {
-  // System messages are handled via --system flag, not injected here
+  // System messages are handled via --system-prompt flag, not injected here
   return messages
     .map((m) => {
       const prefix = m.role === 'assistant' ? 'Assistant' : 'Human';

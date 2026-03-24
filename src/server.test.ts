@@ -7,6 +7,7 @@ const cfg: Config = {
   backend: 'api',
   host: '127.0.0.1',
   port: 3000,
+  logLevel: 'silent',
   api: { apiKey: 'sk-ant-test', model: 'claude-opus-4-6' },
 };
 
@@ -42,5 +43,17 @@ describe('buildApp', () => {
       payload: {},
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it('starts successfully when logLevel is not set (exercises ?? default)', async () => {
+    const cfgNoLogLevel: Config = {
+      backend: 'api',
+      host: '127.0.0.1',
+      port: 3000,
+      api: { apiKey: 'sk-ant-test', model: 'claude-opus-4-6' },
+    };
+    const app = await buildApp(cfgNoLogLevel, mockDriver);
+    expect(app).toBeDefined();
+    await app.close();
   });
 });

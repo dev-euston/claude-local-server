@@ -167,26 +167,26 @@ describe('CliBackend.stream', () => {
     expect(mockSpawn.mock.calls[0][0]).toBe('/custom/claude');
   });
 
-  it('passes system message via --system flag', async () => {
+  it('passes system message via --system-prompt flag', async () => {
     mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6');
     for await (const _chunk of backend.stream({ ...baseRequest, system: 'Be brief.' })) {
       // consume
     }
     const args = mockSpawn.mock.calls[0][1] as string[];
-    const sysIdx = args.indexOf('--system');
+    const sysIdx = args.indexOf('--system-prompt');
     expect(sysIdx).toBeGreaterThan(-1);
     expect(args[sysIdx + 1]).toBe('Be brief.');
   });
 
-  it('does not include --system flag when system is not set', async () => {
+  it('does not include --system-prompt flag when system is not set', async () => {
     mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
     const backend = new CliBackend('claude-opus-4-6');
     for await (const _chunk of backend.stream(baseRequest)) {
       // consume
     }
     const args = mockSpawn.mock.calls[0][1] as string[];
-    expect(args.includes('--system')).toBe(false);
+    expect(args.includes('--system-prompt')).toBe(false);
   });
 
   it('skips empty lines in output', async () => {
@@ -200,6 +200,25 @@ describe('CliBackend.stream', () => {
       chunks.push(chunk);
     }
     expect(chunks[0].delta).toBe('X');
+  });
+
+  it('handles assistant events without id or content fields', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        JSON.stringify({ type: 'assistant', message: {} }),
+        JSON.stringify({ type: 'assistant', message: { id: 'msg_xyz', content: [{ type: 'image', url: 'data:...' }] } }),
+        assistantEvent('Final'),
+        resultEvent('Final'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].delta).toBe('Final');
   });
 
   it('formats assistant-role messages with Assistant prefix', async () => {
