@@ -1,5 +1,17 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Test coverage reports
 coverage/
+
+# Local server configuration (contains API keys)
 config.json
+
+# TypeScript source maps
 *.js.map
+
+# Generated documentation
+docs/

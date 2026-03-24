@@ -17,6 +17,7 @@ export class CliBackend implements BackendDriver {
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
     const prompt = buildPrompt(request.messages);
     let id = `chatcmpl-${randomUUID()}`;
+    let toolIndex = 0;
 
     const args = ['-p', prompt];
     if (request.system !== undefined) args.push('--system-prompt', request.system);
@@ -55,15 +56,57 @@ export class CliBackend implements BackendDriver {
         if (content) {
           for (const block of content) {
             if (block['type'] === 'text' && typeof block['text'] === 'string') {
-              yield { id, delta: block['text'] as string, finishReason: null };
+              yield { type: 'text', id, delta: block['text'] as string, finishReason: null };
+            } else if (block['type'] === 'tool_use') {
+              const capturedIndex = toolIndex;
+              yield {
+                type: 'tool_call_start',
+                id,
+                toolCallId: block['id'] as string,
+                toolIndex: capturedIndex,
+                name: block['name'] as string,
+                finishReason: null,
+              };
+              const input = block['input'] as Record<string, unknown> | undefined;
+              if (input && Object.keys(input).length > 0) {
+                yield {
+                  type: 'tool_call_delta',
+                  id,
+                  toolCallId: block['id'] as string,
+                  toolIndex: capturedIndex,
+                  argumentsDelta: JSON.stringify(input),
+                  finishReason: null,
+                };
+              }
+              toolIndex++;
             }
           }
         }
+      } else if (event['type'] === 'tool_result') {
+        const rawContent = event['content'];
+        let content: string;
+        if (typeof rawContent === 'string') {
+          content = rawContent;
+        } else if (Array.isArray(rawContent)) {
+          content = (rawContent as Array<Record<string, unknown>>)
+            .filter((b) => b['type'] === 'text')
+            .map((b) => b['text'] as string)
+            .join('\n');
+        } else {
+          content = '';
+        }
+        yield {
+          type: 'tool_result',
+          id,
+          toolCallId: event['tool_use_id'] as string,
+          content,
+          finishReason: null,
+        };
       } else if (event['type'] === 'result') {
         if (event['is_error']) {
           throw new Error(`claude CLI error: ${event['result'] as string}`);
         }
-        yield { id, delta: '', finishReason: 'stop' };
+        yield { type: 'text', id, delta: '', finishReason: 'stop' };
         break;
       }
     }
@@ -80,7 +123,9 @@ export class CliBackend implements BackendDriver {
 
     for await (const chunk of this.stream(request)) {
       id = chunk.id;
-      content += chunk.delta;
+      if (chunk.type === 'text') {
+        content += chunk.delta;
+      }
     }
 
     return { id, model: this.model ?? 'claude', content, promptTokens: 0, completionTokens: 0 };

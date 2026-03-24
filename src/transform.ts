@@ -2,7 +2,11 @@ import type {
   NormalizedMessage,
   NormalizedRequest,
   NormalizedResponse,
-  NormalizedChunk,
+  NormalizedTool,
+  TextChunk,
+  ToolCallStartChunk,
+  ToolCallDeltaChunk,
+  ToolResultChunk,
 } from './backends/types.js';
 
 const SUPPORTED_ROLES = new Set(['system', 'user', 'assistant']);
@@ -10,6 +14,15 @@ const SUPPORTED_ROLES = new Set(['system', 'user', 'assistant']);
 interface OpenAIMessage {
   role: string;
   content: string;
+}
+
+interface OpenAITool {
+  type: string;
+  function: {
+    name: string;
+    description?: string;
+    parameters?: object;
+  };
 }
 
 export function openAIMessagesToNormalized(
@@ -30,6 +43,14 @@ export function openAIMessagesToNormalized(
   }
 
   return { messages: normalized, system };
+}
+
+export function openAIToolsToNormalized(tools: OpenAITool[]): NormalizedTool[] {
+  return tools.map((t) => ({
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters,
+  }));
 }
 
 export function normalizedResponseToOpenAI(response: NormalizedResponse): object {
@@ -54,7 +75,7 @@ export function normalizedResponseToOpenAI(response: NormalizedResponse): object
   };
 }
 
-export function normalizedChunkToOpenAI(chunk: NormalizedChunk, model: string): object {
+export function normalizedChunkToOpenAI(chunk: TextChunk, model: string): object {
   return {
     id: chunk.id,
     object: 'chat.completion.chunk',
@@ -68,5 +89,62 @@ export function normalizedChunkToOpenAI(chunk: NormalizedChunk, model: string): 
         logprobs: null,
       },
     ],
+  };
+}
+
+export function normalizedToolCallStartToOpenAI(chunk: ToolCallStartChunk, model: string): object {
+  return {
+    id: chunk.id,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [
+            {
+              index: chunk.toolIndex,
+              id: chunk.toolCallId,
+              type: 'function',
+              function: { name: chunk.name, arguments: '' },
+            },
+          ],
+        },
+        finish_reason: null,
+        logprobs: null,
+      },
+    ],
+  };
+}
+
+export function normalizedToolCallDeltaToOpenAI(chunk: ToolCallDeltaChunk, model: string): object {
+  return {
+    id: chunk.id,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [
+            {
+              index: chunk.toolIndex,
+              function: { arguments: chunk.argumentsDelta },
+            },
+          ],
+        },
+        finish_reason: null,
+        logprobs: null,
+      },
+    ],
+  };
+}
+
+export function normalizedToolResultToOpenAI(chunk: ToolResultChunk): object {
+  return {
+    tool_call_id: chunk.toolCallId,
+    content: chunk.content,
   };
 }

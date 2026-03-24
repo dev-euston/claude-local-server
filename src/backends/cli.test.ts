@@ -46,11 +46,26 @@ const resultEvent = (text: string) =>
 const errorResultEvent = (text: string) =>
   JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: text });
 
+const toolUseAssistantEvent = (
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+  msgId = 'msg_123',
+) =>
+  JSON.stringify({
+    type: 'assistant',
+    message: {
+      id: msgId,
+      content: [{ type: 'tool_use', id, name, input }],
+    },
+  });
+
+const toolResultEvent = (toolUseId: string, content: string | Array<unknown>) =>
+  JSON.stringify({ type: 'tool_result', tool_use_id: toolUseId, content });
+
 describe('CliBackend.stream', () => {
   it('yields text chunk from assistant event and stop chunk from result event', async () => {
-    mockSpawn.mockReturnValue(
-      makeFakeProcess([assistantEvent('Hi!'), resultEvent('Hi!')]),
-    );
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Hi!'), resultEvent('Hi!')]));
 
     const backend = new CliBackend('claude-opus-4-6');
     const chunks = [];
@@ -59,9 +74,10 @@ describe('CliBackend.stream', () => {
     }
 
     expect(chunks).toHaveLength(2);
-    expect(chunks[0].delta).toBe('Hi!');
+    expect(chunks[0].type).toBe('text');
+    if (chunks[0].type === 'text') expect(chunks[0].delta).toBe('Hi!');
     expect(chunks[0].finishReason).toBeNull();
-    expect(chunks[1].delta).toBe('');
+    if (chunks[1].type === 'text') expect(chunks[1].delta).toBe('');
     expect(chunks[1].finishReason).toBe('stop');
   });
 
@@ -94,7 +110,7 @@ describe('CliBackend.stream', () => {
       chunks.push(chunk);
     }
     expect(chunks).toHaveLength(2);
-    expect(chunks[0].delta).toBe('A');
+    if (chunks[0].type === 'text') expect(chunks[0].delta).toBe('A');
   });
 
   it('skips malformed JSON lines and continues', async () => {
@@ -107,7 +123,7 @@ describe('CliBackend.stream', () => {
     for await (const chunk of backend.stream(baseRequest)) {
       chunks.push(chunk);
     }
-    expect(chunks[0].delta).toBe('B');
+    if (chunks[0].type === 'text') expect(chunks[0].delta).toBe('B');
   });
 
   it('throws when process exits with non-zero code', async () => {
@@ -130,9 +146,7 @@ describe('CliBackend.stream', () => {
   });
 
   it('throws when result event has is_error true', async () => {
-    mockSpawn.mockReturnValue(
-      makeFakeProcess([errorResultEvent('something went wrong')]),
-    );
+    mockSpawn.mockReturnValue(makeFakeProcess([errorResultEvent('something went wrong')]));
 
     const backend = new CliBackend('claude-opus-4-6');
     await expect(async () => {
@@ -190,23 +204,24 @@ describe('CliBackend.stream', () => {
   });
 
   it('skips empty lines in output', async () => {
-    mockSpawn.mockReturnValue(
-      makeFakeProcess(['', assistantEvent('X'), resultEvent('X')]),
-    );
+    mockSpawn.mockReturnValue(makeFakeProcess(['', assistantEvent('X'), resultEvent('X')]));
 
     const backend = new CliBackend('claude-opus-4-6');
     const chunks = [];
     for await (const chunk of backend.stream(baseRequest)) {
       chunks.push(chunk);
     }
-    expect(chunks[0].delta).toBe('X');
+    if (chunks[0].type === 'text') expect(chunks[0].delta).toBe('X');
   });
 
   it('handles assistant events without id or content fields', async () => {
     mockSpawn.mockReturnValue(
       makeFakeProcess([
         JSON.stringify({ type: 'assistant', message: {} }),
-        JSON.stringify({ type: 'assistant', message: { id: 'msg_xyz', content: [{ type: 'image', url: 'data:...' }] } }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { id: 'msg_xyz', content: [{ type: 'image', url: 'data:...' }] },
+        }),
         assistantEvent('Final'),
         resultEvent('Final'),
       ]),
@@ -218,7 +233,7 @@ describe('CliBackend.stream', () => {
       chunks.push(chunk);
     }
     expect(chunks).toHaveLength(2);
-    expect(chunks[0].delta).toBe('Final');
+    if (chunks[0].type === 'text') expect(chunks[0].delta).toBe('Final');
   });
 
   it('formats assistant-role messages with Assistant prefix', async () => {
@@ -242,9 +257,7 @@ describe('CliBackend.stream', () => {
 
 describe('CliBackend — no model configured', () => {
   it('returns "claude" as model in response when no model set', async () => {
-    mockSpawn.mockReturnValue(
-      makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi')]),
-    );
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi')]));
     const backend = new CliBackend(undefined);
     const result = await backend.complete(baseRequest);
     expect(result.model).toBe('claude');
@@ -254,10 +267,7 @@ describe('CliBackend — no model configured', () => {
 describe('CliBackend.complete', () => {
   it('accumulates stream chunks into a NormalizedResponse', async () => {
     mockSpawn.mockReturnValue(
-      makeFakeProcess([
-        assistantEvent('Hello world'),
-        resultEvent('Hello world'),
-      ]),
+      makeFakeProcess([assistantEvent('Hello world'), resultEvent('Hello world')]),
     );
 
     const backend = new CliBackend('claude-opus-4-6');
@@ -266,6 +276,22 @@ describe('CliBackend.complete', () => {
     expect(result.model).toBe('claude-opus-4-6');
     expect(result.promptTokens).toBe(0);
     expect(result.completionTokens).toBe(0);
+  });
+
+  it('ignores non-text chunks when accumulating complete() response', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        toolUseAssistantEvent('toolu_001', 'bash', { cmd: 'ls' }, 'msg_abc'),
+        toolResultEvent('toolu_001', 'file.txt'),
+        assistantEvent('Done', 'msg_abc'),
+        resultEvent('Done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const result = await backend.complete(baseRequest);
+    // Only text chunks contribute to content; tool_call_start/delta/result are skipped
+    expect(result.content).toBe('Done');
   });
 
   it('propagates stream errors through complete()', async () => {
@@ -277,5 +303,157 @@ describe('CliBackend.complete', () => {
 
     const backend = new CliBackend('claude-opus-4-6');
     await expect(backend.complete(baseRequest)).rejects.toThrow(/exited with code 1/);
+  });
+});
+
+describe('CliBackend.stream — tool events', () => {
+  it('yields ToolCallStartChunk and ToolCallDeltaChunk for tool_use block in assistant event', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        toolUseAssistantEvent('toolu_001', 'bash', { cmd: 'ls' }, 'msg_abc'),
+        resultEvent('done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    // ToolCallStartChunk, ToolCallDeltaChunk, terminal TextChunk
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0].type).toBe('tool_call_start');
+    if (chunks[0].type === 'tool_call_start') {
+      expect(chunks[0].toolCallId).toBe('toolu_001');
+      expect(chunks[0].name).toBe('bash');
+      expect(chunks[0].toolIndex).toBe(0);
+      expect(chunks[0].id).toContain('msg_abc');
+    }
+    expect(chunks[1].type).toBe('tool_call_delta');
+    if (chunks[1].type === 'tool_call_delta') {
+      expect(chunks[1].toolCallId).toBe('toolu_001');
+      expect(chunks[1].toolIndex).toBe(0);
+      expect(JSON.parse(chunks[1].argumentsDelta)).toEqual({ cmd: 'ls' });
+    }
+    expect(chunks[2].type).toBe('text');
+    if (chunks[2].type === 'text') {
+      expect(chunks[2].finishReason).toBe('stop');
+    }
+  });
+
+  it('increments toolIndex for sequential tool calls', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'msg_seq',
+            content: [
+              { type: 'tool_use', id: 'toolu_001', name: 'bash', input: { cmd: 'ls' } },
+              { type: 'tool_use', id: 'toolu_002', name: 'read', input: { file: 'x' } },
+            ],
+          },
+        }),
+        resultEvent('done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    const starts = chunks.filter((c) => c.type === 'tool_call_start');
+    expect(starts).toHaveLength(2);
+    if (starts[0].type === 'tool_call_start') expect(starts[0].toolIndex).toBe(0);
+    if (starts[1].type === 'tool_call_start') expect(starts[1].toolIndex).toBe(1);
+  });
+
+  it('yields ToolResultChunk for tool_result event with string content', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        toolUseAssistantEvent('toolu_001', 'bash', { cmd: 'ls' }, 'msg_abc'),
+        toolResultEvent('toolu_001', 'file1.txt\nfile2.txt'),
+        resultEvent('done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    const toolResult = chunks.find((c) => c.type === 'tool_result');
+    expect(toolResult).toBeDefined();
+    if (toolResult?.type === 'tool_result') {
+      expect(toolResult.toolCallId).toBe('toolu_001');
+      expect(toolResult.content).toBe('file1.txt\nfile2.txt');
+      expect(toolResult.id).toContain('msg_abc');
+    }
+  });
+
+  it('joins text blocks in array tool result content', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        toolUseAssistantEvent('toolu_001', 'bash', {}, 'msg_abc'),
+        toolResultEvent('toolu_001', [
+          { type: 'text', text: 'line1' },
+          { type: 'image', source: 'data:...' },
+          { type: 'text', text: 'line2' },
+        ]),
+        resultEvent('done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    const toolResult = chunks.find((c) => c.type === 'tool_result');
+    if (toolResult?.type === 'tool_result') {
+      expect(toolResult.content).toBe('line1\nline2');
+    }
+  });
+
+  it('yields ToolResultChunk with empty content for unexpected content type', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        toolUseAssistantEvent('toolu_001', 'bash', { cmd: 'ls' }, 'msg_abc'),
+        toolResultEvent('toolu_001', null as unknown as string),
+        resultEvent('done'),
+      ]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    const toolResult = chunks.find((c) => c.type === 'tool_result');
+    expect(toolResult).toBeDefined();
+    if (toolResult?.type === 'tool_result') {
+      expect(toolResult.content).toBe('');
+    }
+  });
+
+  it('does not yield ToolCallDeltaChunk when tool input is empty', async () => {
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([toolUseAssistantEvent('toolu_001', 'bash', {}), resultEvent('done')]),
+    );
+
+    const backend = new CliBackend('claude-opus-4-6');
+    const chunks = [];
+    for await (const chunk of backend.stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.filter((c) => c.type === 'tool_call_delta')).toHaveLength(0);
+    expect(chunks.filter((c) => c.type === 'tool_call_start')).toHaveLength(1);
   });
 });

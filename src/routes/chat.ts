@@ -3,16 +3,33 @@ import type { Config } from '../config.js';
 import type { BackendDriver } from '../backends/types.js';
 import {
   openAIMessagesToNormalized,
+  openAIToolsToNormalized,
   normalizedResponseToOpenAI,
   normalizedChunkToOpenAI,
+  normalizedToolCallStartToOpenAI,
+  normalizedToolCallDeltaToOpenAI,
+  normalizedToolResultToOpenAI,
 } from '../transform.js';
+
+interface OpenAIToolFunction {
+  name: string;
+  description?: string;
+  parameters?: object;
+}
+
+interface OpenAITool {
+  type: string;
+  function: OpenAIToolFunction;
+}
 
 interface ChatRequestBody {
   messages: { role: string; content: string }[];
   model?: string;
   stream?: boolean;
+  stream_actions?: boolean;
   max_tokens?: number;
   temperature?: number;
+  tools?: OpenAITool[];
 }
 
 export function registerChatRoute(
@@ -33,14 +50,44 @@ export function registerChatRoute(
             messages: { type: 'array', items: { type: 'object' }, minItems: 1 },
             model: { type: 'string' },
             stream: { type: 'boolean' },
+            stream_actions: { type: 'boolean' },
             max_tokens: { type: 'number' },
             temperature: { type: 'number' },
+            tools: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['function'],
+                properties: {
+                  type: { type: 'string' },
+                  function: {
+                    type: 'object',
+                    required: ['name'],
+                    properties: {
+                      name: { type: 'string' },
+                      description: { type: 'string' },
+                      parameters: { type: 'object' },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
       },
     },
     async (req: FastifyRequest<{ Body: ChatRequestBody }>, reply: FastifyReply) => {
       const body = req.body;
+
+      if (body.stream_actions && !body.stream) {
+        return reply.status(400).send({
+          error: {
+            message: 'stream_actions requires stream: true',
+            type: 'invalid_request_error',
+            code: null,
+          },
+        });
+      }
 
       let normalized: {
         messages: import('../backends/types.js').NormalizedMessage[];
@@ -60,6 +107,7 @@ export function registerChatRoute(
         model: modelName,
         maxTokens: body.max_tokens,
         temperature: body.temperature,
+        tools: body.tools ? openAIToolsToNormalized(body.tools) : undefined,
       };
 
       if (body.stream) {
@@ -70,8 +118,25 @@ export function registerChatRoute(
 
         try {
           for await (const chunk of driver.stream(normalizedRequest)) {
-            const sseChunk = normalizedChunkToOpenAI(chunk, modelName);
-            reply.raw.write(`data: ${JSON.stringify(sseChunk)}\n\n`);
+            if (chunk.type === 'text') {
+              reply.raw.write(
+                `data: ${JSON.stringify(normalizedChunkToOpenAI(chunk, modelName))}\n\n`,
+              );
+            } else if (body.stream_actions) {
+              if (chunk.type === 'tool_call_start') {
+                reply.raw.write(
+                  `data: ${JSON.stringify(normalizedToolCallStartToOpenAI(chunk, modelName))}\n\n`,
+                );
+              } else if (chunk.type === 'tool_call_delta') {
+                reply.raw.write(
+                  `data: ${JSON.stringify(normalizedToolCallDeltaToOpenAI(chunk, modelName))}\n\n`,
+                );
+              } else if (chunk.type === 'tool_result') {
+                reply.raw.write(
+                  `event: tool_result\ndata: ${JSON.stringify(normalizedToolResultToOpenAI(chunk))}\n\n`,
+                );
+              }
+            }
           }
           reply.raw.write('data: [DONE]\n\n');
         } catch (err) {

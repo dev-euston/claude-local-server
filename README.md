@@ -76,7 +76,59 @@ curl http://localhost:3000/v1/chat/completions \
   }'
 ```
 
-Supported request fields: `messages`, `model`, `stream`, `max_tokens`, `temperature`.
+Supported request fields: `messages`, `model`, `stream`, `max_tokens`, `temperature`, `tools`, `stream_actions`.
+
+#### Tool definitions
+
+Pass tools in OpenAI format:
+
+```json
+{
+  "messages": [{"role": "user", "content": "What files are here?"}],
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "bash",
+        "description": "Run a shell command",
+        "parameters": {
+          "type": "object",
+          "properties": { "command": { "type": "string" } },
+          "required": ["command"]
+        }
+      }
+    }
+  ]
+}
+```
+
+Tools are forwarded to the backend (Anthropic API or CLI). The server does not execute tools on behalf of the client.
+
+#### Action streaming (`stream_actions`)
+
+When `stream: true`, adding `stream_actions: true` interleaves tool call and tool result events in the SSE stream.
+
+```json
+{ "stream": true, "stream_actions": true, "tools": [...] }
+```
+
+Tool call events use standard OpenAI chunk format:
+
+```
+data: {"object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_xyz","type":"function","function":{"name":"bash","arguments":""}}]}}]}
+
+data: {"object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls\"}"}}]}}]}
+```
+
+Tool result events use a named SSE event (CLI backend only — the API backend never yields tool results):
+
+```
+event: tool_result
+data: {"tool_call_id":"call_xyz","content":"file1.txt\nfile2.txt"}
+```
+
+`stream_actions: true` requires `stream: true` — combining with `stream: false` returns HTTP 400.
 
 ## Development
 

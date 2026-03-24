@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildApp } from '../server.js';
 import type { Config } from '../config.js';
-import type { BackendDriver, NormalizedChunk } from '../backends/types.js';
+import type { BackendDriver, NormalizedChunk, NormalizedRequest } from '../backends/types.js';
 
 const cfg: Config = {
   backend: 'api',
@@ -21,12 +21,58 @@ function makeMockDriver(overrides: Partial<BackendDriver> = {}): BackendDriver {
       completionTokens: 5,
     }),
     stream: vi.fn().mockImplementation(async function* () {
-      yield { id: 'chatcmpl-test', delta: 'Hello', finishReason: null } as NormalizedChunk;
-      yield { id: 'chatcmpl-test', delta: '', finishReason: 'stop' } as NormalizedChunk;
+      yield {
+        type: 'text',
+        id: 'chatcmpl-test',
+        delta: 'Hello',
+        finishReason: null,
+      } as NormalizedChunk;
+      yield {
+        type: 'text',
+        id: 'chatcmpl-test',
+        delta: '',
+        finishReason: 'stop',
+      } as NormalizedChunk;
     }),
     ...overrides,
   };
 }
+
+const mockDriverWithToolChunks: BackendDriver = {
+  stream: async function* (_request: NormalizedRequest) {
+    yield {
+      type: 'tool_call_start',
+      id: 'chatcmpl-t1',
+      toolCallId: 'call_1',
+      toolIndex: 0,
+      name: 'bash',
+      finishReason: null,
+    };
+    yield {
+      type: 'tool_call_delta',
+      id: 'chatcmpl-t1',
+      toolCallId: 'call_1',
+      toolIndex: 0,
+      argumentsDelta: '{"cmd":"ls"}',
+      finishReason: null,
+    };
+    yield {
+      type: 'tool_result',
+      id: 'chatcmpl-t1',
+      toolCallId: 'call_1',
+      content: 'file.txt',
+      finishReason: null,
+    };
+    yield { type: 'text', id: 'chatcmpl-t1', delta: '', finishReason: 'stop' };
+  },
+  complete: async (_request: NormalizedRequest) => ({
+    id: 'chatcmpl-t1',
+    model: 'claude',
+    content: '',
+    promptTokens: 0,
+    completionTokens: 0,
+  }),
+};
 
 describe('POST /v1/chat/completions — non-streaming', () => {
   it('returns a ChatCompletion response', async () => {
@@ -101,6 +147,34 @@ describe('POST /v1/chat/completions — non-streaming', () => {
     const body = response.json() as { error: { message: string } };
     expect(body.error.message).toMatch(/Backend failure/);
   });
+
+  it('non-streaming: content is empty string when complete() returns empty content', async () => {
+    const emptyContentDriver = {
+      stream: async function* () {
+        yield { type: 'text' as const, id: 'x', delta: '', finishReason: 'stop' as const };
+      },
+      complete: async () => ({
+        id: 'chatcmpl-x',
+        model: 'claude',
+        content: '',
+        promptTokens: 0,
+        completionTokens: 0,
+      }),
+    };
+    const app = await buildApp(cfg, emptyContentDriver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude',
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: false,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.choices[0].message.content).toBe('');
+  });
 });
 
 describe('POST /v1/chat/completions — streaming', () => {
@@ -125,7 +199,12 @@ describe('POST /v1/chat/completions — streaming', () => {
   it('sends SSE error event when backend stream throws', async () => {
     const driver = makeMockDriver({
       stream: vi.fn().mockImplementation(async function* () {
-        yield { id: 'chatcmpl-test', delta: 'Partial', finishReason: null } as NormalizedChunk;
+        yield {
+          type: 'text',
+          id: 'chatcmpl-test',
+          delta: 'Partial',
+          finishReason: null,
+        } as NormalizedChunk;
         throw new Error('stream exploded');
       }),
     });
@@ -138,5 +217,267 @@ describe('POST /v1/chat/completions — streaming', () => {
     expect(response.body).toContain('"error"');
     expect(response.body).toContain('stream exploded');
     expect(response.body).not.toContain('[DONE]');
+  });
+
+  it('final SSE chunk has finish_reason: "stop" and empty delta', async () => {
+    const driverForFinishReason = {
+      stream: async function* () {
+        yield {
+          type: 'tool_call_start' as const,
+          id: 'chatcmpl-f',
+          toolCallId: 'call_f',
+          toolIndex: 0,
+          name: 'bash',
+          finishReason: null as null,
+        };
+        yield {
+          type: 'text' as const,
+          id: 'chatcmpl-f',
+          delta: '',
+          finishReason: 'stop' as string | null,
+        };
+      },
+      complete: async () => ({
+        id: 'chatcmpl-f',
+        model: 'claude',
+        content: '',
+        promptTokens: 0,
+        completionTokens: 0,
+      }),
+    };
+    const app = await buildApp(cfg, driverForFinishReason);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'Hi' }], stream: true },
+    });
+    expect(response.statusCode).toBe(200);
+    const dataLines = response.body
+      .split('\n')
+      .filter((l: string) => l.startsWith('data: ') && l !== 'data: [DONE]');
+    const lastChunk = JSON.parse(dataLines[dataLines.length - 1].replace('data: ', '')) as Record<
+      string,
+      unknown
+    >;
+    const choices = lastChunk['choices'] as Array<Record<string, unknown>>;
+    expect(choices[0]['finish_reason']).toBe('stop');
+    expect(choices[0]['delta']).toEqual({});
+  });
+});
+
+describe('POST /v1/chat/completions — stream_actions', () => {
+  it('stream_actions: true + stream: true — all four SSE chunks present with correct framing', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        stream_actions: true,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.body;
+
+    // tool_call_start chunk — collect data: lines that are NOT preceded by event: tool_result
+    const lines = body.split('\n');
+    const standardDataLines: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+        const prevLine = i > 0 ? lines[i - 1] : '';
+        if (prevLine !== 'event: tool_result') {
+          standardDataLines.push(line);
+        }
+      }
+    }
+    const chunks = standardDataLines.map(
+      (l: string) => JSON.parse(l.replace('data: ', '')) as Record<string, unknown>,
+    );
+
+    // Should have 3 data: chunks (tool_call_start, tool_call_delta, text)
+    expect(chunks.length).toBe(3);
+    expect(chunks[0]['object']).toBe('chat.completion.chunk');
+    expect(chunks[1]['object']).toBe('chat.completion.chunk');
+    expect(chunks[2]['object']).toBe('chat.completion.chunk');
+
+    // tool_result uses event: tool_result framing
+    expect(body).toContain('event: tool_result');
+    const eventLines = body.split('\n');
+    const toolResultEventIdx = eventLines.findIndex((l: string) => l === 'event: tool_result');
+    expect(toolResultEventIdx).toBeGreaterThanOrEqual(0);
+    const toolResultDataLine = eventLines[toolResultEventIdx + 1];
+    expect(toolResultDataLine).toMatch(/^data: /);
+    const toolResultData = JSON.parse(toolResultDataLine.replace('data: ', '')) as Record<
+      string,
+      unknown
+    >;
+    expect(toolResultData['tool_call_id']).toBe('call_1');
+    expect(toolResultData['content']).toBe('file.txt');
+  });
+
+  it('stream_actions: false + stream: true — tool chunks absent from output', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        stream_actions: false,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.body;
+    expect(body).not.toContain('event: tool_result');
+    expect(body).not.toContain('tool_call_start');
+
+    // Only the text chunk should be present
+    const dataLines = body
+      .split('\n')
+      .filter((l: string) => l.startsWith('data: ') && l !== 'data: [DONE]');
+    expect(dataLines.length).toBe(1);
+  });
+
+  it('stream_actions absent + stream: true — tool chunks absent from output', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.body;
+    expect(body).not.toContain('event: tool_result');
+
+    const dataLines = body
+      .split('\n')
+      .filter((l: string) => l.startsWith('data: ') && l !== 'data: [DONE]');
+    expect(dataLines.length).toBe(1);
+  });
+
+  it('stream_actions: true + stream: false — returns HTTP 400', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: false,
+        stream_actions: true,
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { error: { message: string } };
+    expect(body.error.message).toBe('stream_actions requires stream: true');
+  });
+
+  it('stream_actions: true — unknown chunk type is silently skipped', async () => {
+    const driverWithUnknownChunk: BackendDriver = {
+      stream: async function* (_request: NormalizedRequest) {
+        // Inject a chunk type that is not in the union — exercises the false branch of
+        // the final else-if in the stream handler
+        yield {
+          type: 'unknown_future_type',
+          id: 'chatcmpl-u',
+          finishReason: null,
+        } as unknown as NormalizedChunk;
+        yield { type: 'text', id: 'chatcmpl-u', delta: '', finishReason: 'stop' };
+      },
+      complete: async (_request: NormalizedRequest) => ({
+        id: 'chatcmpl-u',
+        model: 'claude',
+        content: '',
+        promptTokens: 0,
+        completionTokens: 0,
+      }),
+    };
+    const app = await buildApp(cfg, driverWithUnknownChunk);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        stream_actions: true,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('[DONE]');
+  });
+
+  it('stream_actions: true + no tools field — valid response (no 400)', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        stream_actions: true,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('stream_actions: true + malformed tools entry — returns HTTP 400', async () => {
+    const app = await buildApp(cfg, mockDriverWithToolChunks);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        stream_actions: true,
+        tools: [{ function: {} }], // missing name
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('tools present in request — NormalizedRequest.tools passed to driver', async () => {
+    let capturedRequest: NormalizedRequest | undefined;
+    const capturingDriver: BackendDriver = {
+      stream: async function* (request: NormalizedRequest) {
+        capturedRequest = request;
+        yield { type: 'text', id: 'chatcmpl-cap', delta: '', finishReason: 'stop' };
+      },
+      complete: async (_request: NormalizedRequest) => ({
+        id: 'chatcmpl-cap',
+        model: 'claude',
+        content: '',
+        promptTokens: 0,
+        completionTokens: 0,
+      }),
+    };
+
+    const app = await buildApp(cfg, capturingDriver);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'bash', description: 'Run bash', parameters: { type: 'object' } },
+          },
+        ],
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest!.tools).toBeDefined();
+    expect(capturedRequest!.tools).toHaveLength(1);
+    expect(capturedRequest!.tools![0].name).toBe('bash');
+    expect(capturedRequest!.tools![0].description).toBe('Run bash');
   });
 });

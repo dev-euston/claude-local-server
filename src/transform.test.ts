@@ -3,8 +3,18 @@ import {
   openAIMessagesToNormalized,
   normalizedResponseToOpenAI,
   normalizedChunkToOpenAI,
+  openAIToolsToNormalized,
+  normalizedToolCallStartToOpenAI,
+  normalizedToolCallDeltaToOpenAI,
+  normalizedToolResultToOpenAI,
 } from './transform.js';
-import type { NormalizedResponse, NormalizedChunk } from './backends/types.js';
+import type {
+  NormalizedResponse,
+  TextChunk,
+  ToolCallStartChunk,
+  ToolCallDeltaChunk,
+  ToolResultChunk,
+} from './backends/types.js';
 
 describe('openAIMessagesToNormalized', () => {
   it('maps user and assistant messages', () => {
@@ -72,7 +82,12 @@ describe('normalizedResponseToOpenAI', () => {
 
 describe('normalizedChunkToOpenAI', () => {
   it('converts a mid-stream chunk', () => {
-    const chunk: NormalizedChunk = { id: 'chatcmpl-abc', delta: 'Hello', finishReason: null };
+    const chunk: TextChunk = {
+      type: 'text',
+      id: 'chatcmpl-abc',
+      delta: 'Hello',
+      finishReason: null,
+    };
     const result = normalizedChunkToOpenAI(chunk, 'claude-opus-4-6') as Record<string, unknown>;
     expect(result['id']).toBe('chatcmpl-abc');
     expect(result['object']).toBe('chat.completion.chunk');
@@ -83,10 +98,119 @@ describe('normalizedChunkToOpenAI', () => {
   });
 
   it('converts the final chunk with finish_reason and empty delta', () => {
-    const chunk: NormalizedChunk = { id: 'chatcmpl-abc', delta: '', finishReason: 'stop' };
+    const chunk: TextChunk = { type: 'text', id: 'chatcmpl-abc', delta: '', finishReason: 'stop' };
     const result = normalizedChunkToOpenAI(chunk, 'claude-opus-4-6') as Record<string, unknown>;
     const choices = result['choices'] as Array<Record<string, unknown>>;
     expect(choices[0]['finish_reason']).toBe('stop');
     expect(choices[0]['delta']).toEqual({});
+  });
+});
+
+describe('openAIToolsToNormalized', () => {
+  it('converts OpenAI function tools to NormalizedTool array', () => {
+    const result = openAIToolsToNormalized([
+      {
+        type: 'function',
+        function: { name: 'bash', description: 'Run shell', parameters: { type: 'object' } },
+      },
+    ]);
+    expect(result).toEqual([
+      { name: 'bash', description: 'Run shell', parameters: { type: 'object' } },
+    ]);
+  });
+
+  it('handles missing description and parameters', () => {
+    const result = openAIToolsToNormalized([{ type: 'function', function: { name: 'read_file' } }]);
+    expect(result).toEqual([{ name: 'read_file', description: undefined, parameters: undefined }]);
+  });
+});
+
+describe('normalizedToolCallStartToOpenAI', () => {
+  it('emits OpenAI tool call header chunk with empty arguments', () => {
+    const chunk: ToolCallStartChunk = {
+      type: 'tool_call_start',
+      id: 'chatcmpl-abc',
+      toolCallId: 'call_xyz',
+      toolIndex: 0,
+      name: 'bash',
+      finishReason: null,
+    };
+    const result = normalizedToolCallStartToOpenAI(chunk, 'claude-opus-4-6') as Record<
+      string,
+      unknown
+    >;
+    expect(result['id']).toBe('chatcmpl-abc');
+    expect(result['object']).toBe('chat.completion.chunk');
+    const choices = result['choices'] as Array<Record<string, unknown>>;
+    const toolCalls = (choices[0]['delta'] as Record<string, unknown>)['tool_calls'] as Array<
+      Record<string, unknown>
+    >;
+    expect(toolCalls[0]['index']).toBe(0);
+    expect(toolCalls[0]['id']).toBe('call_xyz');
+    expect(toolCalls[0]['type']).toBe('function');
+    const fn = toolCalls[0]['function'] as Record<string, string>;
+    expect(fn['name']).toBe('bash');
+    expect(fn['arguments']).toBe('');
+    expect(choices[0]['finish_reason']).toBeNull();
+  });
+
+  it('uses chunk.toolIndex for the tool_calls array index', () => {
+    const chunk: ToolCallStartChunk = {
+      type: 'tool_call_start',
+      id: 'chatcmpl-abc',
+      toolCallId: 'call_2',
+      toolIndex: 2,
+      name: 'read',
+      finishReason: null,
+    };
+    const result = normalizedToolCallStartToOpenAI(chunk, 'claude') as Record<string, unknown>;
+    const choices = result['choices'] as Array<Record<string, unknown>>;
+    const toolCalls = (choices[0]['delta'] as Record<string, unknown>)['tool_calls'] as Array<
+      Record<string, unknown>
+    >;
+    expect(toolCalls[0]['index']).toBe(2);
+  });
+});
+
+describe('normalizedToolCallDeltaToOpenAI', () => {
+  it('emits arguments delta chunk without id/type/name', () => {
+    const chunk: ToolCallDeltaChunk = {
+      type: 'tool_call_delta',
+      id: 'chatcmpl-abc',
+      toolCallId: 'call_xyz',
+      toolIndex: 1,
+      argumentsDelta: '{"cmd":',
+      finishReason: null,
+    };
+    const result = normalizedToolCallDeltaToOpenAI(chunk, 'claude-opus-4-6') as Record<
+      string,
+      unknown
+    >;
+    expect(result['id']).toBe('chatcmpl-abc');
+    const choices = result['choices'] as Array<Record<string, unknown>>;
+    const toolCalls = (choices[0]['delta'] as Record<string, unknown>)['tool_calls'] as Array<
+      Record<string, unknown>
+    >;
+    expect(toolCalls[0]['index']).toBe(1);
+    expect(toolCalls[0]['id']).toBeUndefined();
+    expect(toolCalls[0]['type']).toBeUndefined();
+    const fn = toolCalls[0]['function'] as Record<string, string>;
+    expect(fn['arguments']).toBe('{"cmd":');
+    expect(fn['name']).toBeUndefined();
+  });
+});
+
+describe('normalizedToolResultToOpenAI', () => {
+  it('returns a plain object with tool_call_id and content', () => {
+    const chunk: ToolResultChunk = {
+      type: 'tool_result',
+      id: 'chatcmpl-abc',
+      toolCallId: 'call_xyz',
+      content: 'exit 0',
+      finishReason: null,
+    };
+    const result = normalizedToolResultToOpenAI(chunk) as Record<string, unknown>;
+    expect(result['tool_call_id']).toBe('call_xyz');
+    expect(result['content']).toBe('exit 0');
   });
 });

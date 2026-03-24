@@ -41,8 +41,22 @@ type ApiConfig = z.infer<typeof ApiConfigSchema>;
 type CliConfig = z.infer<typeof CliConfigSchema>;
 
 export type Config =
-  | { backend: 'api'; host: string; port: number; logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent'; api: ApiConfig; cli?: CliConfig }
-  | { backend: 'cli'; host: string; port: number; logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent'; api?: ApiConfig; cli: CliConfig };
+  | {
+      backend: 'api';
+      host: string;
+      port: number;
+      logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
+      api: ApiConfig;
+      cli?: CliConfig;
+    }
+  | {
+      backend: 'cli';
+      host: string;
+      port: number;
+      logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
+      api?: ApiConfig;
+      cli: CliConfig;
+    };
 
 export function loadConfig(configPath: string): Config {
   let raw: string;
