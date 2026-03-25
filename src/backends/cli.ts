@@ -14,14 +14,34 @@ export class CliBackend implements BackendDriver {
     private claudePath: string = 'claude',
   ) {}
 
+  private sessions = new Map<string, string>();
+
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
-    const prompt = buildPrompt(request.messages);
+    const isResume = request.sessionId !== undefined && this.sessions.has(request.sessionId);
+
+    let prompt: string;
+    if (isResume) {
+      const lastMessage = request.messages[request.messages.length - 1];
+      if (!lastMessage) {
+        throw new Error('Cannot resume a session with an empty message list');
+      }
+      if (lastMessage.role !== 'user') {
+        throw new Error('Last message must be a user message when resuming a session');
+      }
+      prompt = lastMessage.content;
+    } else {
+      prompt = buildPrompt(request.messages);
+    }
+
     let id = `chatcmpl-${randomUUID()}`;
     let toolIndex = 0;
 
     const args = ['-p', prompt];
-    if (request.system !== undefined) args.push('--system-prompt', request.system);
     args.push('--output-format', 'stream-json', '--verbose');
+    if (isResume) {
+      args.push('--resume', this.sessions.get(request.sessionId!)!);
+    }
+    if (request.system !== undefined) args.push('--system-prompt', request.system);
 
     const proc = spawn(this.claudePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -105,6 +125,9 @@ export class CliBackend implements BackendDriver {
       } else if (event['type'] === 'result') {
         if (event['is_error']) {
           throw new Error(`claude CLI error: ${event['result'] as string}`);
+        }
+        if (request.sessionId && typeof event['session_id'] === 'string') {
+          this.sessions.set(request.sessionId, event['session_id']);
         }
         yield { type: 'text', id, delta: '', finishReason: 'stop' };
         break;

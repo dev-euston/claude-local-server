@@ -17,6 +17,7 @@ export interface NormalizedRequest {
   maxTokens?: number;
   temperature?: number;
   tools?: NormalizedTool[];
+  sessionId?: string; // client-provided X-Session-ID value; opaque to API backend
 }
 
 export interface NormalizedResponse {

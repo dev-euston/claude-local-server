@@ -481,3 +481,92 @@ describe('POST /v1/chat/completions — stream_actions', () => {
     expect(capturedRequest!.tools![0].description).toBe('Run bash');
   });
 });
+
+describe('POST /v1/chat/completions — X-Session-ID header', () => {
+  it('string header → sessionId threaded into NormalizedRequest (non-streaming)', async () => {
+    let captured: NormalizedRequest | undefined;
+    const driver: BackendDriver = {
+      complete: async (req) => {
+        captured = req;
+        return { id: 'x', model: 'claude', content: '', promptTokens: 0, completionTokens: 0 };
+      },
+      stream: async function* () {
+        yield { type: 'text', id: 'x', delta: '', finishReason: 'stop' };
+      },
+    };
+    const app = await buildApp(cfg, driver);
+    await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'my-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(captured?.sessionId).toBe('my-session');
+  });
+
+  it('string header → sessionId threaded into NormalizedRequest (streaming)', async () => {
+    let captured: NormalizedRequest | undefined;
+    const driver: BackendDriver = {
+      complete: async () => ({
+        id: 'x',
+        model: 'claude',
+        content: '',
+        promptTokens: 0,
+        completionTokens: 0,
+      }),
+      stream: async function* (req) {
+        captured = req;
+        yield { type: 'text', id: 'x', delta: '', finishReason: 'stop' };
+      },
+    };
+    const app = await buildApp(cfg, driver);
+    await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'my-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }], stream: true },
+    });
+    expect(captured?.sessionId).toBe('my-session');
+  });
+
+  it('absent header → sessionId is undefined', async () => {
+    let captured: NormalizedRequest | undefined;
+    const driver: BackendDriver = {
+      complete: async (req) => {
+        captured = req;
+        return { id: 'x', model: 'claude', content: '', promptTokens: 0, completionTokens: 0 };
+      },
+      stream: async function* () {
+        yield { type: 'text', id: 'x', delta: '', finishReason: 'stop' };
+      },
+    };
+    const app = await buildApp(cfg, driver);
+    await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(captured?.sessionId).toBeUndefined();
+  });
+
+  it('empty-array header → sessionId is undefined', async () => {
+    let captured: NormalizedRequest | undefined;
+    const driver: BackendDriver = {
+      complete: async (req) => {
+        captured = req;
+        return { id: 'x', model: 'claude', content: '', promptTokens: 0, completionTokens: 0 };
+      },
+      stream: async function* () {
+        yield { type: 'text', id: 'x', delta: '', finishReason: 'stop' };
+      },
+    };
+    const app = await buildApp(cfg, driver);
+    await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': [] },
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(captured?.sessionId).toBeUndefined();
+  });
+});

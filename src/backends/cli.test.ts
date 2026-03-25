@@ -40,8 +40,14 @@ const assistantEvent = (text: string, id = 'msg_123') =>
     message: { id, content: [{ type: 'text', text }] },
   });
 
-const resultEvent = (text: string) =>
-  JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text });
+const resultEvent = (text: string, sessionId?: string) =>
+  JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: text,
+    ...(sessionId ? { session_id: sessionId } : {}),
+  });
 
 const errorResultEvent = (text: string) =>
   JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: text });
@@ -191,6 +197,19 @@ describe('CliBackend.stream', () => {
     const sysIdx = args.indexOf('--system-prompt');
     expect(sysIdx).toBeGreaterThan(-1);
     expect(args[sysIdx + 1]).toBe('Be brief.');
+  });
+
+  it('places --system-prompt after --verbose in arg list', async () => {
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
+    const backend = new CliBackend('claude-opus-4-6');
+    for await (const _chunk of backend.stream({ ...baseRequest, system: 'Be brief.' })) {
+      // consume
+    }
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    const verboseIdx = args.indexOf('--verbose');
+    const sysIdx = args.indexOf('--system-prompt');
+    expect(sysIdx).toBeGreaterThan(-1);
+    expect(sysIdx).toBeGreaterThan(verboseIdx);
   });
 
   it('does not include --system-prompt flag when system is not set', async () => {
@@ -455,5 +474,201 @@ describe('CliBackend.stream — tool events', () => {
 
     expect(chunks.filter((c) => c.type === 'tool_call_delta')).toHaveLength(0);
     expect(chunks.filter((c) => c.type === 'tool_call_start')).toHaveLength(1);
+  });
+});
+
+describe('CliBackend.stream — sessions', () => {
+  it('session lifecycle: first call uses full prompt; second call uses --resume with bare content', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Call 1: session miss — full prompt, no --resume
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi', 'claude-sess-1')]),
+    );
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Hello' }],
+      sessionId: 'client-sess-1',
+    })) {
+    }
+
+    const call1Args = mockSpawn.mock.calls[0][1] as string[];
+    expect(call1Args[1]).toContain('Human: Hello'); // full prompt via buildPrompt
+    expect(call1Args).not.toContain('--resume');
+
+    // Call 2: session hit — bare content only, --resume claude-sess-1
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Fine'), resultEvent('Fine', 'claude-sess-2')]),
+    );
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi' },
+        { role: 'user', content: 'How are you?' },
+      ],
+      sessionId: 'client-sess-1',
+    })) {
+    }
+
+    const call2Args = mockSpawn.mock.calls[0][1] as string[];
+    expect(call2Args[1]).toBe('How are you?'); // bare content — no "Human: " prefix
+    const resumeIdx = call2Args.indexOf('--resume');
+    expect(resumeIdx).toBeGreaterThan(-1);
+    expect(call2Args[resumeIdx + 1]).toBe('claude-sess-1'); // stored from call 1
+  });
+
+  it('no sessionId: stateless path — no --resume, no session stored', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi', 'claude-sess-x')]),
+    );
+    for await (const _ of backend.stream(baseRequest)) {
+    }
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain('--resume');
+
+    // Subsequent call without sessionId also has no --resume
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
+    for await (const _ of backend.stream(baseRequest)) {
+    }
+    expect(mockSpawn.mock.calls[0][1] as string[]).not.toContain('--resume');
+  });
+
+  it('stale map entry persists when resume returns is_error: true', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Call 1: populate map with known session ID
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'claude-sess-old')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    // Call 2: resume fails
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([
+        JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'bad session' }),
+      ]),
+    );
+    await expect(async () => {
+      for await (const _ of backend.stream({
+        ...baseRequest,
+        messages: [{ role: 'user', content: 'Hi again' }],
+        sessionId: 'my-sess',
+      })) {
+      }
+    }).rejects.toThrow(/bad session/);
+
+    // Call 3: stale entry still used — --resume still points to claude-sess-old
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Try again' }],
+      sessionId: 'my-sess',
+    })) {
+    }
+    const call3Args = mockSpawn.mock.calls[0][1] as string[];
+    const resumeIdx = call3Args.indexOf('--resume');
+    expect(resumeIdx).toBeGreaterThan(-1);
+    expect(call3Args[resumeIdx + 1]).toBe('claude-sess-old'); // unchanged
+  });
+
+  it('throws before spawning when last message is not user-role on resume', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Populate the session map
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    vi.clearAllMocks();
+    await expect(async () => {
+      for await (const _ of backend.stream({
+        ...baseRequest,
+        messages: [
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'Hi' }, // last message is assistant
+        ],
+        sessionId: 'my-sess',
+      })) {
+      }
+    }).rejects.toThrow();
+
+    expect(mockSpawn).not.toHaveBeenCalled(); // no process spawned
+  });
+
+  it('throws before spawning when message list is empty on resume', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Populate session map
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    vi.clearAllMocks();
+    await expect(async () => {
+      for await (const _ of backend.stream({
+        ...baseRequest,
+        messages: [],
+        sessionId: 'my-sess',
+      })) {
+      }
+    }).rejects.toThrow(/empty message list/);
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to new-session path when result event has no session_id', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Call 1: result event has no session_id — map NOT populated
+    mockSpawn.mockReturnValue(
+      makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi')]), // no sessionId arg
+    );
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    // Call 2: still a miss — full prompt, no --resume
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Follow up' }],
+      sessionId: 'my-sess',
+    })) {
+    }
+
+    const call2Args = mockSpawn.mock.calls[0][1] as string[];
+    expect(call2Args).not.toContain('--resume');
+  });
+
+  it('--system-prompt appears after --resume in canonical arg order', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Establish session
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    // Resume with system prompt
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Hi' }],
+      system: 'Be brief.',
+      sessionId: 'my-sess',
+    })) {
+    }
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    const resumeIdx = args.indexOf('--resume');
+    const sysIdx = args.indexOf('--system-prompt');
+    expect(resumeIdx).toBeGreaterThan(-1);
+    expect(sysIdx).toBeGreaterThan(resumeIdx);
   });
 });

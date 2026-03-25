@@ -101,6 +101,15 @@ export function registerChatRoute(
         });
       }
 
+      const rawSessionHeader = req.headers['x-session-id'];
+      /* c8 ignore next */
+      const sessionId: string | undefined = Array.isArray(rawSessionHeader)
+        ? /* c8 ignore next */
+          rawSessionHeader.length > 0
+          ? rawSessionHeader[0]
+          : undefined
+        : rawSessionHeader || undefined;
+
       const normalizedRequest = {
         messages: normalized.messages,
         system: normalized.system,
@@ -108,6 +117,7 @@ export function registerChatRoute(
         maxTokens: body.max_tokens,
         temperature: body.temperature,
         tools: body.tools ? openAIToolsToNormalized(body.tools) : undefined,
+        sessionId,
       };
 
       if (body.stream) {
