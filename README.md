@@ -78,6 +78,29 @@ curl http://localhost:3000/v1/chat/completions \
 
 Supported request fields: `messages`, `model`, `stream`, `max_tokens`, `temperature`, `tools`, `stream_actions`.
 
+<<<<<<< Updated upstream
+=======
+#### Sessions (CLI backend only)
+
+The CLI backend supports persistent sessions via the `X-Session-ID` request header. When present, the server resumes an existing Claude session with `--resume` instead of rebuilding the full conversation history on every request.
+
+| Condition | Behavior |
+|---|---|
+| No `X-Session-ID` | Stateless — full history sent as prompt every call |
+| Header present, first call | Full history sent; Claude session ID stored in memory |
+| Header present, session exists | Only the last user message sent; `--resume <id>` used |
+| Resume fails | 500 returned; stale entry kept; use a new `X-Session-ID` to start fresh |
+
+Sessions are stored in memory and lost on server restart.
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: my-convo-1" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+>>>>>>> Stashed changes
 #### Tool definitions
 
 Pass tools in OpenAI format:
