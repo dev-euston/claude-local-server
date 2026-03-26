@@ -6,6 +6,8 @@ import type {
   NormalizedRequest,
   NormalizedResponse,
   NormalizedChunk,
+  NormalizedMessage,
+  SessionInfo,
 } from './types.js';
 
 export class CliBackend implements BackendDriver {
@@ -14,7 +16,11 @@ export class CliBackend implements BackendDriver {
     private claudePath: string = 'claude',
   ) {}
 
-  private sessions = new Map<string, string>();
+  private sessions = new Map<string, {
+    claudeSessionId: string;
+    lastUsed: Date;
+    messages: NormalizedMessage[];
+  }>();
 
   hasSession(sessionId: string): boolean {
     return this.sessions.has(sessionId);
@@ -22,6 +28,19 @@ export class CliBackend implements BackendDriver {
 
   deleteSession(sessionId: string): boolean {
     return this.sessions.delete(sessionId);
+  }
+
+  listSessions(): { id: string; lastUsed: Date }[] {
+    return Array.from(this.sessions.entries()).map(([id, entry]) => ({
+      id,
+      lastUsed: entry.lastUsed,
+    }));
+  }
+
+  getSession(id: string): SessionInfo | undefined {
+    const entry = this.sessions.get(id);
+    if (!entry) return undefined;
+    return { id, lastUsed: entry.lastUsed, messages: entry.messages };
   }
 
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
@@ -43,11 +62,12 @@ export class CliBackend implements BackendDriver {
 
     let id = `chatcmpl-${randomUUID()}`;
     let toolIndex = 0;
+    let assistantText = '';
 
     const args = ['-p', prompt];
     args.push('--output-format', 'stream-json', '--verbose');
     if (isResume) {
-      args.push('--resume', this.sessions.get(request.sessionId!)!);
+      args.push('--resume', this.sessions.get(request.sessionId!)!.claudeSessionId);
     }
     if (request.system !== undefined) args.push('--system-prompt', request.system);
 
@@ -84,6 +104,7 @@ export class CliBackend implements BackendDriver {
         if (content) {
           for (const block of content) {
             if (block['type'] === 'text' && typeof block['text'] === 'string') {
+              assistantText += block['text'] as string;
               yield { type: 'text', id, delta: block['text'] as string, finishReason: null };
             } else if (block['type'] === 'tool_use') {
               const capturedIndex = toolIndex;
@@ -135,7 +156,15 @@ export class CliBackend implements BackendDriver {
           throw new Error(`claude CLI error: ${event['result'] as string}`);
         }
         if (request.sessionId && typeof event['session_id'] === 'string') {
-          this.sessions.set(request.sessionId, event['session_id']);
+          const allMessages: NormalizedMessage[] = [
+            ...request.messages,
+            { role: 'assistant', content: assistantText },
+          ];
+          this.sessions.set(request.sessionId, {
+            claudeSessionId: event['session_id'],
+            lastUsed: new Date(),
+            messages: allMessages,
+          });
         }
         yield { type: 'text', id, delta: '', finishReason: 'stop' };
         break;

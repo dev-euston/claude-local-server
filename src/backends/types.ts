@@ -77,9 +77,17 @@ export type ToolResultChunk = {
 
 export type NormalizedChunk = TextChunk | ToolCallStartChunk | ToolCallDeltaChunk | ToolResultChunk;
 
+export interface SessionInfo {
+  id: string;
+  lastUsed: Date;
+  messages: NormalizedMessage[];
+}
+
 export interface BackendDriver {
   complete(request: NormalizedRequest): Promise<NormalizedResponse>;
   stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk>;
   hasSession?(sessionId: string): boolean;
   deleteSession?(sessionId: string): boolean; // returns true if session existed
+  listSessions?(): { id: string; lastUsed: Date }[];
+  getSession?(id: string): SessionInfo | undefined;
 }

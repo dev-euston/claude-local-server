@@ -3,7 +3,11 @@
     "allow": [
       "Bash(npm:*)",
       "Bash(git:*)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(awk 'NR>=140,NR<=175')",
+      "Bash(awk 'NR>=745,NR<=790')",
+      "Bash(awk 'NR>=104,NR==145')",
+      "Bash(awk 'NR>=155,NR==170')"
     ],
     "deny": [
       "Bash(git push:*)"

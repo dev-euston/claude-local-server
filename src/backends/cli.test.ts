@@ -699,4 +699,81 @@ describe('CliBackend.stream — sessions', () => {
     expect(resumeIdx).toBeGreaterThan(-1);
     expect(sysIdx).toBeGreaterThan(resumeIdx);
   });
+
+  it('listSessions returns empty array before any sessions are stored', () => {
+    const backend = new CliBackend('claude-opus-4-6');
+    expect(backend.listSessions()).toEqual([]);
+  });
+
+  it('listSessions returns session id and lastUsed after a successful stream', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+    const before = new Date();
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi', 'claude-sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {}
+    const after = new Date();
+
+    const list = backend.listSessions();
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe('my-sess');
+    expect(list[0].lastUsed.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(list[0].lastUsed.getTime()).toBeLessThanOrEqual(after.getTime());
+  });
+
+  it('getSession returns undefined for unknown id', () => {
+    const backend = new CliBackend('claude-opus-4-6');
+    expect(backend.getSession('nope')).toBeUndefined();
+  });
+
+  it('getSession returns full history including assistant response after stream', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Hello!'), resultEvent('Hello!', 'claude-sess-1')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Hi' }],
+      sessionId: 'my-sess',
+    })) {}
+
+    const session = backend.getSession('my-sess');
+    expect(session).toBeDefined();
+    expect(session!.id).toBe('my-sess');
+    expect(session!.messages).toEqual([
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: 'Hello!' },
+    ]);
+  });
+
+  it('getSession updates lastUsed and appends history on each resume', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    // Call 1
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Hi'), resultEvent('Hi', 'claude-sess-1')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'Hello' }],
+      sessionId: 'my-sess',
+    })) {}
+    const firstLastUsed = backend.getSession('my-sess')!.lastUsed;
+
+    // Call 2 (resume)
+    vi.clearAllMocks();
+    mockSpawn.mockReturnValue(makeFakeProcess([assistantEvent('Fine'), resultEvent('Fine', 'claude-sess-2')]));
+    for await (const _ of backend.stream({
+      ...baseRequest,
+      messages: [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi' },
+        { role: 'user', content: 'How are you?' },
+      ],
+      sessionId: 'my-sess',
+    })) {}
+
+    const session = backend.getSession('my-sess')!;
+    expect(session.messages).toEqual([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi' },
+      { role: 'user', content: 'How are you?' },
+      { role: 'assistant', content: 'Fine' },
+    ]);
+    expect(session.lastUsed.getTime()).toBeGreaterThanOrEqual(firstLastUsed.getTime());
+  });
 });
