@@ -43,11 +43,22 @@ CLI backend (uses your local `claude` installation and its default model):
 }
 ```
 
+With bearer token authentication (recommended when exposing the server over a network):
+```json
+{
+  "backend": "cli",
+  "apiKey": "your-secret-here"
+}
+```
+
+Generate a token: `openssl rand -base64 32`
+
 | Field | Default | Description |
 |---|---|---|
 | `backend` | required | `"api"` or `"cli"` |
 | `host` | `"127.0.0.1"` | Bind address |
 | `port` | `3000` | Listen port |
+| `apiKey` | — | When set, all requests must include `Authorization: Bearer <apiKey>`. Omit to disable auth (local use only). |
 | `api.apiKey` | required for api | Anthropic API key |
 | `api.model` | required for api | Model ID |
 | `cli.model` | Claude's default | Model ID (omit to use whatever `claude` defaults to) |
@@ -70,6 +81,7 @@ Accepts standard OpenAI chat completion requests, including streaming via `"stre
 ```bash
 curl http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-here" \
   -d '{
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": false
@@ -78,8 +90,6 @@ curl http://localhost:3000/v1/chat/completions \
 
 Supported request fields: `messages`, `model`, `stream`, `max_tokens`, `temperature`, `tools`, `stream_actions`.
 
-<<<<<<< Updated upstream
-=======
 #### Sessions (CLI backend only)
 
 The CLI backend supports persistent sessions via the `X-Session-ID` request header. When present, the server resumes an existing Claude session with `--resume` instead of rebuilding the full conversation history on every request.
@@ -100,7 +110,6 @@ curl http://localhost:3000/v1/chat/completions \
   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
->>>>>>> Stashed changes
 #### Tool definitions
 
 Pass tools in OpenAI format:

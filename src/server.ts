@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
+import { timingSafeEqual } from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import type { BackendDriver } from './backends/types.js';
@@ -21,6 +22,19 @@ export async function buildApp(config: Config, driver?: BackendDriver): Promise<
   await app.register(sensible);
 
   const activeDriver = driver ?? createDriver(config);
+
+  if (config.apiKey) {
+    const expected = Buffer.from(`Bearer ${config.apiKey}`);
+    app.addHook('onRequest', async (request, reply) => {
+      const auth = request.headers.authorization ?? '';
+      const actual = Buffer.from(auth);
+      const match =
+        actual.length === expected.length && timingSafeEqual(actual, expected);
+      if (!match) {
+        await reply.status(401).send({ error: 'Unauthorized' });
+      }
+    });
+  }
 
   registerModelsRoute(app, config);
   registerChatRoute(app, config, activeDriver);

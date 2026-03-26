@@ -28,7 +28,7 @@ Returns the list of available models (always exactly one — whichever model is 
 }
 ```
 
-No request body or query parameters. No authentication required.
+No request body or query parameters. Requires `Authorization: Bearer <apiKey>` if `apiKey` is set in the server config.
 
 ---
 
@@ -41,6 +41,7 @@ Submit a conversation and get a response. Supports both blocking and streaming m
 | Header | Required | Description |
 |---|---|---|
 | `Content-Type` | Yes | Must be `application/json` |
+| `Authorization` | When `apiKey` is configured | `Bearer <apiKey>`. Returns 401 if missing or incorrect. |
 | `X-Session-ID` | No | Enable stateful sessions (CLI backend only — see [Sessions](#sessions)) |
 
 **Request body**
@@ -268,6 +269,7 @@ All errors use this shape:
 | HTTP status | `type` | When |
 |---|---|---|
 | 400 | `invalid_request_error` | Bad request body (unsupported role, `stream_actions` without `stream`, schema violation) |
+| 401 | — | `apiKey` is configured and the `Authorization` header is missing or incorrect. Body: `{"error":"Unauthorized"}` |
 | 500 | `server_error` | Backend error, process failure, resume failure |
 
 Streaming errors are delivered as a `data:` event (not an HTTP error status) because headers are already sent:
@@ -322,7 +324,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://127.0.0.1:3000/v1",
-    api_key="not-used",  # required by the SDK but ignored by the server
+    api_key="your-secret-here",  # must match apiKey in config.json; use any string if auth is disabled
 )
 
 response = client.chat.completions.create(
@@ -337,7 +339,7 @@ import OpenAI from 'openai';
 
 const client = new OpenAI({
   baseURL: 'http://127.0.0.1:3000/v1',
-  apiKey: 'not-used',
+  apiKey: 'your-secret-here', // must match apiKey in config.json; use any string if auth is disabled
 });
 
 const response = await client.chat.completions.create({
@@ -360,7 +362,7 @@ const response = await client.chat.completions.create(
 
 ## Known limitations
 
-- **No authentication.** The server has no API key validation. Bind to `127.0.0.1` (the default) and do not expose it to the network.
+- **Authentication is optional.** When `apiKey` is not set in `config.json`, the server has no access control. Bind to `127.0.0.1` (the default) and do not expose it to the network without setting an `apiKey`.
 - **Single model.** The `model` field in requests is ignored. The configured model is always used.
 - **Sessions are in-memory.** Lost on server restart. No cross-process sharing.
 - **Tool results from API backend.** The API backend never emits `tool_result` events — only the CLI backend does.

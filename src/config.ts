@@ -16,6 +16,7 @@ const ConfigSchema = z
     backend: z.enum(['api', 'cli']),
     host: z.string().default('127.0.0.1'),
     port: z.number().int().positive().default(3000),
+    apiKey: z.string().min(1).optional(),
     api: ApiConfigSchema.optional(),
     cli: CliConfigSchema.optional(),
     logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'silent']).optional(),
@@ -45,6 +46,7 @@ export type Config =
       backend: 'api';
       host: string;
       port: number;
+      apiKey?: string;
       logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
       api: ApiConfig;
       cli?: CliConfig;
@@ -53,6 +55,7 @@ export type Config =
       backend: 'cli';
       host: string;
       port: number;
+      apiKey?: string;
       logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
       api?: ApiConfig;
       cli: CliConfig;

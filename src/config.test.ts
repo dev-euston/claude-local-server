@@ -105,6 +105,28 @@ describe('loadConfig — validation errors', () => {
   });
 });
 
+describe('loadConfig — apiKey', () => {
+  it('accepts apiKey at top level', () => {
+    const p = writeTmp({ backend: 'cli', cli: {}, apiKey: 'my-secret' });
+    const cfg = loadConfig(p);
+    expect(cfg.apiKey).toBe('my-secret');
+    rmSync(p);
+  });
+
+  it('apiKey is undefined when omitted', () => {
+    const p = writeTmp({ backend: 'cli', cli: {} });
+    const cfg = loadConfig(p);
+    expect(cfg.apiKey).toBeUndefined();
+    rmSync(p);
+  });
+
+  it('rejects empty string apiKey', () => {
+    const p = writeTmp({ backend: 'cli', cli: {}, apiKey: '' });
+    expect(() => loadConfig(p)).toThrow('Invalid config');
+    rmSync(p);
+  });
+});
+
 describe('loadConfig — logLevel', () => {
   it('accepts logLevel "info"', () => {
     const p = writeTmp({ backend: 'cli', logLevel: 'info', cli: {} });
