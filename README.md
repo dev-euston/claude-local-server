@@ -92,22 +92,33 @@ Supported request fields: `messages`, `model`, `stream`, `max_tokens`, `temperat
 
 #### Sessions (CLI backend only)
 
-The CLI backend supports persistent sessions via the `X-Session-ID` request header. When present, the server resumes an existing Claude session with `--resume` instead of rebuilding the full conversation history on every request.
+The CLI backend supports persistent sessions. The server manages session IDs — clients do not generate them.
 
 | Condition | Behavior |
 |---|---|
-| No `X-Session-ID` | Stateless — full history sent as prompt every call |
-| Header present, first call | Full history sent; Claude session ID stored in memory |
-| Header present, session exists | Only the last user message sent; `--resume <id>` used |
-| Resume fails | 500 returned; stale entry kept; use a new `X-Session-ID` to start fresh |
+| No `X-Session-ID` header | Server generates a new UUID session ID; returned in `X-Session-ID` response header |
+| Header present, session exists | Session resumed with `--resume`; only the last user message is sent |
+| Header present, session not found | HTTP 404 returned |
+| Resume fails | HTTP 500 returned; stale entry kept; omit the header to start a new session |
 
 Sessions are stored in memory and lost on server restart.
+
+**Starting a session** (omit the header; read the ID from the response):
+
+```bash
+SESSION_ID=$(curl -si http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}]}' \
+  | grep -i '^x-session-id:' | awk '{print $2}' | tr -d '\r')
+```
+
+**Resuming a session**:
 
 ```bash
 curl http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "X-Session-ID: my-convo-1" \
-  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+  -H "X-Session-ID: $SESSION_ID" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "How are you?"}]}'
 ```
 
 #### Tool definitions

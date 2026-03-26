@@ -16,6 +16,10 @@ export class CliBackend implements BackendDriver {
 
   private sessions = new Map<string, string>();
 
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
     const isResume = request.sessionId !== undefined && this.sessions.has(request.sessionId);
 

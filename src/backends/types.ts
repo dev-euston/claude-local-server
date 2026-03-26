@@ -17,7 +17,7 @@ export interface NormalizedRequest {
   maxTokens?: number;
   temperature?: number;
   tools?: NormalizedTool[];
-  sessionId?: string; // client-provided X-Session-ID value; opaque to API backend
+  sessionId?: string; // server-assigned session ID; opaque to API backend
 }
 
 export interface NormalizedResponse {
@@ -80,4 +80,5 @@ export type NormalizedChunk = TextChunk | ToolCallStartChunk | ToolCallDeltaChun
 export interface BackendDriver {
   complete(request: NormalizedRequest): Promise<NormalizedResponse>;
   stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk>;
+  hasSession?(sessionId: string): boolean;
 }

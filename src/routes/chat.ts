@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Config } from '../config.js';
 import type { BackendDriver } from '../backends/types.js';
@@ -103,12 +104,28 @@ export function registerChatRoute(
 
       const rawSessionHeader = req.headers['x-session-id'];
       /* c8 ignore next */
-      const sessionId: string | undefined = Array.isArray(rawSessionHeader)
+      const providedSessionId: string | undefined = Array.isArray(rawSessionHeader)
         ? /* c8 ignore next */
           rawSessionHeader.length > 0
           ? rawSessionHeader[0]
           : undefined
         : rawSessionHeader || undefined;
+
+      let sessionId: string | undefined;
+      if (driver.hasSession) {
+        if (providedSessionId !== undefined) {
+          if (!driver.hasSession(providedSessionId)) {
+            return reply.status(404).send({
+              error: { message: 'Session not found', type: 'invalid_request_error', code: null },
+            });
+          }
+          sessionId = providedSessionId;
+        } else {
+          sessionId = randomUUID();
+        }
+      } else {
+        sessionId = providedSessionId;
+      }
 
       const normalizedRequest = {
         messages: normalized.messages,
@@ -124,6 +141,7 @@ export function registerChatRoute(
         reply.raw.setHeader('Content-Type', 'text/event-stream');
         reply.raw.setHeader('Cache-Control', 'no-cache');
         reply.raw.setHeader('Connection', 'keep-alive');
+        if (sessionId !== undefined) reply.raw.setHeader('X-Session-ID', sessionId);
         reply.raw.flushHeaders();
 
         try {
@@ -162,6 +180,7 @@ export function registerChatRoute(
 
       try {
         const response = await driver.complete(normalizedRequest);
+        if (sessionId !== undefined) void reply.header('X-Session-ID', sessionId);
         return reply.send(normalizedResponseToOpenAI(response));
       } catch (err) {
         return reply.status(500).send({

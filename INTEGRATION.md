@@ -42,7 +42,7 @@ Submit a conversation and get a response. Supports both blocking and streaming m
 |---|---|---|
 | `Content-Type` | Yes | Must be `application/json` |
 | `Authorization` | When `apiKey` is configured | `Bearer <apiKey>`. Returns 401 if missing or incorrect. |
-| `X-Session-ID` | No | Enable stateful sessions (CLI backend only — see [Sessions](#sessions)) |
+| `X-Session-ID` | No | Resume an existing session (CLI backend only — see [Sessions](#sessions)). Omit to start a new session. |
 
 **Request body**
 
@@ -197,31 +197,29 @@ data: {"tool_call_id":"toolu_01A","content":"file1.txt\nfile2.txt\nREADME.md"}
 
 The CLI backend supports persistent sessions. Without sessions, the server serializes the entire conversation history into a single prompt string on every request. With sessions, it resumes an existing Claude process using `--resume`, sending only the newest user message.
 
-Sessions are opt-in via the `X-Session-ID` request header. The value is an arbitrary string chosen by the client — treat it like a conversation ID.
+The server manages session IDs. To start a session, omit the `X-Session-ID` header — the server generates a UUID and returns it in the `X-Session-ID` response header. Pass that value back on every subsequent request in the same conversation.
 
 ### Behavior
 
 | Condition | Behavior |
 |---|---|
-| No `X-Session-ID` header | Stateless — full history sent every call (default) |
-| Header present, no stored session | New session — full history sent; server stores the returned Claude session ID |
-| Header present, session exists | Resume — only the last user message is sent; `--resume <id>` is used |
-| Resume fails (non-zero exit or `is_error: true`) | HTTP 500 returned; stale session entry kept; client must use a new `X-Session-ID` to recover |
+| No `X-Session-ID` header | New session — full history sent; server generates a UUID and returns it in `X-Session-ID` response header |
+| Header present, session exists | Resume — only the last user message is sent; `--resume <id>` is used; same ID echoed in response header |
+| Header present, session not found | HTTP 404 returned |
+| Resume fails (non-zero exit or `is_error: true`) | HTTP 500 returned; stale session entry kept; omit the header to start a new session |
 
 **Constraints:**
 - Sessions are stored in memory. They are lost on server restart.
 - On a resume, the last message in `messages` must have `role: "user"`. Anything else returns HTTP 500.
-- Two concurrent requests with the same `X-Session-ID` may race on the first call — the second stored value wins, which is harmless.
 - The API backend ignores `X-Session-ID` entirely.
 
 ### Example flow
 
-**First request (new session):**
+**First request (no header — server creates session and returns ID):**
 
 ```http
 POST /v1/chat/completions
 Content-Type: application/json
-X-Session-ID: convo-abc123
 
 {
   "messages": [
@@ -231,12 +229,18 @@ X-Session-ID: convo-abc123
 }
 ```
 
-**Second request (resumed session — only last message matters):**
+Response includes:
+
+```
+X-Session-ID: 550e8400-e29b-41d4-a716-446655440000
+```
+
+**Second request (resumed session — pass back the ID; only last message matters):**
 
 ```http
 POST /v1/chat/completions
 Content-Type: application/json
-X-Session-ID: convo-abc123
+X-Session-ID: 550e8400-e29b-41d4-a716-446655440000
 
 {
   "messages": [
@@ -270,6 +274,7 @@ All errors use this shape:
 |---|---|---|
 | 400 | `invalid_request_error` | Bad request body (unsupported role, `stream_actions` without `stream`, schema violation) |
 | 401 | — | `apiKey` is configured and the `Authorization` header is missing or incorrect. Body: `{"error":"Unauthorized"}` |
+| 404 | `invalid_request_error` | `X-Session-ID` header provided but no matching session found on the server |
 | 500 | `server_error` | Backend error, process failure, resume failure |
 
 Streaming errors are delivered as a `data:` event (not an HTTP error status) because headers are already sent:
@@ -302,10 +307,12 @@ data: {"error":{"message":"...","type":"server_error","code":null}}
 
 ### Session-aware adapter
 
-1. Generate a stable session ID per conversation (UUID works well).
-2. Include `X-Session-ID: <id>` on every request in that conversation.
-3. Always send the complete message history in `messages` (the server handles which part to use).
-4. If you receive HTTP 500 with a message about a failed resume, generate a new session ID and retry.
+1. On the first request of a conversation, omit `X-Session-ID`.
+2. Read the `X-Session-ID` header from the response — this is the server-assigned session ID.
+3. Include `X-Session-ID: <id>` on every subsequent request in that conversation.
+4. Always send the complete message history in `messages` (the server handles which part to use on resume).
+5. If you receive HTTP 404, the session is not known to the server (e.g. after a restart). Omit the header to start a new session.
+6. If you receive HTTP 500 with a message about a failed resume, omit the header to start a new session.
 
 ### Tool-using adapter
 
@@ -349,12 +356,21 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-Sessions with the SDK (pass extra headers):
+Sessions with the SDK — start a session and persist the returned ID:
 
 ```typescript
-const response = await client.chat.completions.create(
+// First request: no X-Session-ID; server creates one
+const first = await client.chat.completions.create(
   { model: 'claude-opus-4-6', messages },
-  { headers: { 'X-Session-ID': conversationId } },
+  { headers: {} },
+);
+// @ts-ignore — rawResponse is available on the underlying fetch response
+const sessionId = first.response.headers.get('x-session-id');
+
+// Subsequent requests: pass the session ID back
+const second = await client.chat.completions.create(
+  { model: 'claude-opus-4-6', messages: [...messages, ...newMessages] },
+  { headers: { 'X-Session-ID': sessionId } },
 );
 ```
 

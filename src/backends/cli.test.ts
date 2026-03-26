@@ -646,6 +646,19 @@ describe('CliBackend.stream — sessions', () => {
     expect(call2Args).not.toContain('--resume');
   });
 
+  it('hasSession returns false before first call and true after session is stored', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    expect(backend.hasSession('my-sess')).toBe(false);
+
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'claude-sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    expect(backend.hasSession('my-sess')).toBe(true);
+    expect(backend.hasSession('other-sess')).toBe(false);
+  });
+
   it('--system-prompt appears after --resume in canonical arg order', async () => {
     const backend = new CliBackend('claude-opus-4-6');
 

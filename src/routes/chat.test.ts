@@ -570,3 +570,110 @@ describe('POST /v1/chat/completions — X-Session-ID header', () => {
     expect(captured?.sessionId).toBeUndefined();
   });
 });
+
+describe('POST /v1/chat/completions — server-managed sessions', () => {
+  function makeSessionDriver(knownIds: string[] = []) {
+    const sessions = new Set(knownIds);
+    let captured: NormalizedRequest | undefined;
+    const driver: BackendDriver = {
+      hasSession: (id: string) => sessions.has(id),
+      complete: async (req) => {
+        captured = req;
+        return { id: 'x', model: 'claude', content: '', promptTokens: 0, completionTokens: 0 };
+      },
+      stream: async function* (req) {
+        captured = req;
+        yield { type: 'text', id: 'x', delta: '', finishReason: 'stop' };
+      },
+    };
+    return { driver, getCapture: () => captured };
+  }
+
+  it('no header → generates UUID session ID and returns it in X-Session-ID response header (non-streaming)', async () => {
+    const { driver, getCapture } = makeSessionDriver();
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    const returnedId = res.headers['x-session-id'];
+    expect(typeof returnedId).toBe('string');
+    expect(returnedId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(getCapture()?.sessionId).toBe(returnedId);
+  });
+
+  it('no header → generates UUID session ID and returns it in X-Session-ID response header (streaming)', async () => {
+    const { driver, getCapture } = makeSessionDriver();
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'Hi' }], stream: true },
+    });
+    expect(res.statusCode).toBe(200);
+    const returnedId = res.headers['x-session-id'];
+    expect(typeof returnedId).toBe('string');
+    expect(returnedId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(getCapture()?.sessionId).toBe(returnedId);
+  });
+
+  it('known session ID → passes through and echoes X-Session-ID in response header (non-streaming)', async () => {
+    const { driver, getCapture } = makeSessionDriver(['existing-session']);
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'existing-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-session-id']).toBe('existing-session');
+    expect(getCapture()?.sessionId).toBe('existing-session');
+  });
+
+  it('known session ID → passes through and echoes X-Session-ID in response header (streaming)', async () => {
+    const { driver, getCapture } = makeSessionDriver(['existing-session']);
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'existing-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }], stream: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-session-id']).toBe('existing-session');
+    expect(getCapture()?.sessionId).toBe('existing-session');
+  });
+
+  it('unknown session ID → 404 session not found (non-streaming)', async () => {
+    const { driver } = makeSessionDriver();
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'unknown-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }] },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.message).toBe('Session not found');
+  });
+
+  it('unknown session ID → 404 session not found (streaming)', async () => {
+    const { driver } = makeSessionDriver();
+    const app = await buildApp(cfg, driver);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-session-id': 'unknown-session' },
+      payload: { messages: [{ role: 'user', content: 'Hi' }], stream: true },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.message).toBe('Session not found');
+  });
+});
