@@ -81,4 +81,5 @@ export interface BackendDriver {
   complete(request: NormalizedRequest): Promise<NormalizedResponse>;
   stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk>;
   hasSession?(sessionId: string): boolean;
+  deleteSession?(sessionId: string): boolean; // returns true if session existed
 }

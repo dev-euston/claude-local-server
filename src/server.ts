@@ -8,6 +8,7 @@ import { ApiBackend } from './backends/api.js';
 import { CliBackend } from './backends/cli.js';
 import { registerModelsRoute } from './routes/models.js';
 import { registerChatRoute } from './routes/chat.js';
+import { registerSessionsRoute } from './routes/sessions.js';
 
 /* c8 ignore next 5 — only called when no driver override is provided; all tests inject a mock */
 function createDriver(config: Config): BackendDriver {
@@ -28,8 +29,7 @@ export async function buildApp(config: Config, driver?: BackendDriver): Promise<
     app.addHook('onRequest', async (request, reply) => {
       const auth = request.headers.authorization ?? '';
       const actual = Buffer.from(auth);
-      const match =
-        actual.length === expected.length && timingSafeEqual(actual, expected);
+      const match = actual.length === expected.length && timingSafeEqual(actual, expected);
       if (!match) {
         await reply.status(401).send({ error: 'Unauthorized' });
       }
@@ -38,6 +38,7 @@ export async function buildApp(config: Config, driver?: BackendDriver): Promise<
 
   registerModelsRoute(app, config);
   registerChatRoute(app, config, activeDriver);
+  registerSessionsRoute(app, activeDriver);
 
   await app.ready();
   return app;

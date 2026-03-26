@@ -600,9 +600,7 @@ describe('POST /v1/chat/completions — server-managed sessions', () => {
     expect(res.statusCode).toBe(200);
     const returnedId = res.headers['x-session-id'];
     expect(typeof returnedId).toBe('string');
-    expect(returnedId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(returnedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(getCapture()?.sessionId).toBe(returnedId);
   });
 
@@ -617,9 +615,7 @@ describe('POST /v1/chat/completions — server-managed sessions', () => {
     expect(res.statusCode).toBe(200);
     const returnedId = res.headers['x-session-id'];
     expect(typeof returnedId).toBe('string');
-    expect(returnedId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(returnedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(getCapture()?.sessionId).toBe(returnedId);
   });
 

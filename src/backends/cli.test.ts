@@ -659,6 +659,21 @@ describe('CliBackend.stream — sessions', () => {
     expect(backend.hasSession('other-sess')).toBe(false);
   });
 
+  it('deleteSession removes the entry and returns true; returns false when not found', async () => {
+    const backend = new CliBackend('claude-opus-4-6');
+
+    expect(backend.deleteSession('nonexistent')).toBe(false);
+
+    mockSpawn.mockReturnValue(makeFakeProcess([resultEvent('', 'claude-sess-1')]));
+    for await (const _ of backend.stream({ ...baseRequest, sessionId: 'my-sess' })) {
+    }
+
+    expect(backend.hasSession('my-sess')).toBe(true);
+    expect(backend.deleteSession('my-sess')).toBe(true);
+    expect(backend.hasSession('my-sess')).toBe(false);
+    expect(backend.deleteSession('my-sess')).toBe(false);
+  });
+
   it('--system-prompt appears after --resume in canonical arg order', async () => {
     const backend = new CliBackend('claude-opus-4-6');
 

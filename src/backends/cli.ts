@@ -20,6 +20,10 @@ export class CliBackend implements BackendDriver {
     return this.sessions.has(sessionId);
   }
 
+  deleteSession(sessionId: string): boolean {
+    return this.sessions.delete(sessionId);
+  }
+
   async *stream(request: NormalizedRequest): AsyncIterable<NormalizedChunk> {
     const isResume = request.sessionId !== undefined && this.sessions.has(request.sessionId);
 

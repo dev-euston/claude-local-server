@@ -32,6 +32,23 @@ No request body or query parameters. Requires `Authorization: Bearer <apiKey>` i
 
 ---
 
+### `DELETE /v1/sessions/:id`
+
+End a session (CLI backend only). The session is removed from the server's in-memory store.
+
+| Status | When |
+|---|---|
+| 204 No Content | Session existed and was deleted |
+| 404 | Session not found |
+
+No request body. Requires `Authorization: Bearer <apiKey>` if `apiKey` is set.
+
+```bash
+curl -X DELETE http://localhost:3000/v1/sessions/550e8400-e29b-41d4-a716-446655440000
+```
+
+---
+
 ### `POST /v1/chat/completions`
 
 Submit a conversation and get a response. Supports both blocking and streaming modes.
@@ -206,12 +223,12 @@ The server manages session IDs. To start a session, omit the `X-Session-ID` head
 | No `X-Session-ID` header | New session — full history sent; server generates a UUID and returns it in `X-Session-ID` response header |
 | Header present, session exists | Resume — only the last user message is sent; `--resume <id>` is used; same ID echoed in response header |
 | Header present, session not found | HTTP 404 returned |
-| Resume fails (non-zero exit or `is_error: true`) | HTTP 500 returned; stale session entry kept; omit the header to start a new session |
+| Resume fails (non-zero exit or `is_error: true`) | HTTP 500 returned; stale session entry kept; delete the session or omit the header to start fresh |
 
 **Constraints:**
 - Sessions are stored in memory. They are lost on server restart.
 - On a resume, the last message in `messages` must have `role: "user"`. Anything else returns HTTP 500.
-- The API backend ignores `X-Session-ID` entirely.
+- The API backend ignores `X-Session-ID` entirely and does not register the `DELETE /v1/sessions/:id` route.
 
 ### Example flow
 
@@ -274,7 +291,7 @@ All errors use this shape:
 |---|---|---|
 | 400 | `invalid_request_error` | Bad request body (unsupported role, `stream_actions` without `stream`, schema violation) |
 | 401 | — | `apiKey` is configured and the `Authorization` header is missing or incorrect. Body: `{"error":"Unauthorized"}` |
-| 404 | `invalid_request_error` | `X-Session-ID` header provided but no matching session found on the server |
+| 404 | `invalid_request_error` | `X-Session-ID` provided but session not found; or `DELETE /v1/sessions/:id` for an unknown session |
 | 500 | `server_error` | Backend error, process failure, resume failure |
 
 Streaming errors are delivered as a `data:` event (not an HTTP error status) because headers are already sent:
@@ -313,6 +330,7 @@ data: {"error":{"message":"...","type":"server_error","code":null}}
 4. Always send the complete message history in `messages` (the server handles which part to use on resume).
 5. If you receive HTTP 404, the session is not known to the server (e.g. after a restart). Omit the header to start a new session.
 6. If you receive HTTP 500 with a message about a failed resume, omit the header to start a new session.
+7. When done with a conversation, send `DELETE /v1/sessions/<id>` to free the server-side entry.
 
 ### Tool-using adapter
 

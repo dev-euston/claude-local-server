@@ -99,9 +99,10 @@ The CLI backend supports persistent sessions. The server manages session IDs —
 | No `X-Session-ID` header | Server generates a new UUID session ID; returned in `X-Session-ID` response header |
 | Header present, session exists | Session resumed with `--resume`; only the last user message is sent |
 | Header present, session not found | HTTP 404 returned |
-| Resume fails | HTTP 500 returned; stale entry kept; omit the header to start a new session |
+| Header present, session not found | HTTP 404 returned |
+| Resume fails | HTTP 500 returned; stale entry kept; delete the session or omit the header to start fresh |
 
-Sessions are stored in memory and lost on server restart.
+Sessions are stored in memory and lost on server restart. To explicitly end a session, send `DELETE /v1/sessions/<id>`.
 
 **Starting a session** (omit the header; read the ID from the response):
 
