@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { timingSafeEqual } from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
@@ -22,11 +24,34 @@ export async function buildApp(config: Config, driver?: BackendDriver): Promise<
   const app = Fastify({ logger: { level: config.logLevel ?? 'info' } });
   await app.register(sensible);
 
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'Claude Local Server',
+        description: 'OpenAI-compatible API proxy to Anthropic Claude',
+        version: '1.0.0',
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+          },
+        },
+      },
+      security: [{ bearerAuth: [] }],
+    },
+  });
+  await app.register(swaggerUi, {
+    routePrefix: '/documentation',
+  });
+
   const activeDriver = driver ?? createDriver(config);
 
   if (config.apiKey) {
     const expected = Buffer.from(`Bearer ${config.apiKey}`);
     app.addHook('onRequest', async (request, reply) => {
+      if (request.url.startsWith('/documentation')) return;
       const auth = request.headers.authorization ?? '';
       const actual = Buffer.from(auth);
       const match = actual.length === expected.length && timingSafeEqual(actual, expected);

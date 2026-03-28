@@ -44,6 +44,8 @@ export function registerChatRoute(
     '/v1/chat/completions',
     {
       schema: {
+        tags: ['Chat'],
+        summary: 'Create a chat completion',
         body: {
           type: 'object',
           required: ['messages'],

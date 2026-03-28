@@ -80,6 +80,21 @@ describe('buildApp', () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it('serves swagger JSON at /documentation/json', async () => {
+    const app = await buildApp(cfg, mockDriver);
+    const response = await app.inject({ method: 'GET', url: '/documentation/json' });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.info.title).toBe('Claude Local Server');
+  });
+
+  it('allows unauthenticated access to /documentation when apiKey is configured', async () => {
+    const cfgWithKey: Config = { ...cfg, apiKey: 'secret' };
+    const app = await buildApp(cfgWithKey, mockDriver);
+    const response = await app.inject({ method: 'GET', url: '/documentation/json' });
+    expect(response.statusCode).toBe(200);
+  });
+
   it('starts successfully when logLevel is not set (exercises ?? default)', async () => {
     const cfgNoLogLevel: Config = {
       backend: 'api',
